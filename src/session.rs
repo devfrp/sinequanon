@@ -5,6 +5,7 @@ use crate::annot::{IntegraleAnnot, PointAnnot, TangenteAnnot};
 use crate::curve::Curve;
 use crate::grid::Page;
 use crate::i18n::Lang;
+use crate::tableau::Tableau;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -23,6 +24,9 @@ pub struct Session {
     pub tangentes: Vec<TangenteAnnot>,
     #[serde(default)]
     pub integrales: Vec<IntegraleAnnot>,
+    /// tableaux de signes et de variations (v0.3+)
+    #[serde(default)]
+    pub tableaux: Vec<Tableau>,
 }
 
 /// Chemin du fichier de session selon la plateforme.
@@ -77,6 +81,7 @@ mod tests {
                 a: 0.0,
                 b: 2.0,
             }],
+            tableaux: vec![crate::tableau::parse("[:x:]||[-\\infty:/:>:2]").unwrap()],
         };
         let txt = serde_json::to_string(&s).unwrap();
         let back: Session = serde_json::from_str(&txt).unwrap();

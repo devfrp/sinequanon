@@ -4,6 +4,7 @@ use crate::annot::AnnotDraw;
 use crate::curve::Curve;
 use crate::grid::{Page, PAS_MM};
 use crate::png::Raster;
+use crate::tableau::{pieces, Piece, Tableau};
 use std::path::Path;
 
 /// Polylignes d'une courbe, en coordonnées page (mm).
@@ -57,8 +58,61 @@ fn svg_text(s: &mut String, x: f64, y: f64, txt: &str, color: &str, anchor: &str
     ));
 }
 
+/// Échappe les caractères spéciaux XML.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Ajoute le SVG d'un tableau (textes mathématiques en serif italique).
+fn svg_tableau(s: &mut String, t: &Tableau) {
+    if !t.dessiner || t.rows.is_empty() {
+        return;
+    }
+    let traits = hex(t.couleur_traits);
+    let textes = hex(t.couleur_textes);
+    s.push_str(&format!(
+        "<g transform=\"translate({},{})\" stroke=\"{}\">\n",
+        f(t.x_mm),
+        f(t.y_mm),
+        traits
+    ));
+    for piece in pieces(t) {
+        match piece {
+            Piece::Ligne { x0, y0, x1, y1, w } => svg_line(s, x0, y0, x1, y1, &traits, w),
+            Piece::Texte {
+                x,
+                y,
+                size,
+                txt,
+                italique,
+            } => {
+                let (fam, style) = if italique {
+                    ("DejaVu Serif, serif", " font-style=\"italic\"")
+                } else {
+                    ("DejaVu Sans, sans-serif", "")
+                };
+                s.push_str(&format!(
+                    "<text x=\"{}\" y=\"{}\" font-size=\"{}\" font-family=\"{fam}\"{style} fill=\"{textes}\" stroke=\"none\">{}</text>\n",
+                    f(x),
+                    f(y),
+                    fmt_num(size),
+                    xml_escape(&txt)
+                ));
+            }
+        }
+    }
+    s.push_str("</g>\n");
+}
+
 /// Construit le SVG complet de la page.
-pub fn svg(page: &Page, curves: &[CurvePolys], annots: &[AnnotDraw]) -> String {
+pub fn svg(
+    page: &Page,
+    curves: &[CurvePolys],
+    annots: &[AnnotDraw],
+    tableaux: &[Tableau],
+) -> String {
     let p = page;
     let mut s = String::with_capacity(64 * 1024);
     s.push_str(&format!(
@@ -319,6 +373,10 @@ pub fn svg(page: &Page, curves: &[CurvePolys], annots: &[AnnotDraw]) -> String {
             AnnotDraw::Integrale { .. } => {}
         }
     }
+    // tableaux de signes et de variations, par-dessus la grille
+    for t in tableaux {
+        svg_tableau(&mut s, t);
+    }
     s.push_str("</g>\n</svg>\n");
     s
 }
@@ -328,9 +386,10 @@ pub fn write_svg_file(
     page: &Page,
     curves: &[CurvePolys],
     annots: &[AnnotDraw],
+    tableaux: &[Tableau],
     path: &Path,
 ) -> std::io::Result<usize> {
-    let s = svg(page, curves, annots);
+    let s = svg(page, curves, annots, tableaux);
     std::fs::write(path, s.as_bytes())?;
     Ok(s.len())
 }
@@ -513,11 +572,61 @@ fn draw_annots_raster(r: &mut Raster, annots: &[AnnotDraw], ppm: f64) {
     }
 }
 
+/// Dessine un tableau dans un raster (police bitmap 5×7 pour les textes).
+fn draw_tableau_raster(r: &mut Raster, t: &Tableau, ppm: f64) {
+    if !t.dessiner || t.rows.is_empty() {
+        return;
+    }
+    let c_traits = [
+        t.couleur_traits[0],
+        t.couleur_traits[1],
+        t.couleur_traits[2],
+        255,
+    ];
+    let c_textes = [
+        t.couleur_textes[0],
+        t.couleur_textes[1],
+        t.couleur_textes[2],
+        255,
+    ];
+    for piece in pieces(t) {
+        match piece {
+            Piece::Ligne { x0, y0, x1, y1, w } => {
+                r.line(
+                    (t.x_mm + x0) * ppm,
+                    (t.y_mm + y0) * ppm,
+                    (t.x_mm + x1) * ppm,
+                    (t.y_mm + y1) * ppm,
+                    c_traits,
+                    (w * ppm).clamp(1.0, 4.0),
+                );
+            }
+            Piece::Texte {
+                x,
+                y,
+                size,
+                txt,
+                italique,
+            } => {
+                r.draw_text(
+                    (t.x_mm + x) * ppm,
+                    (t.y_mm + y) * ppm,
+                    &txt,
+                    size * ppm,
+                    c_textes,
+                    italique,
+                );
+            }
+        }
+    }
+}
+
 /// Écrit la page en PNG à `px_per_mm` pixels par millimètre.
 pub fn write_png_file(
     page: &Page,
     curves: &[CurvePolys],
     annots: &[AnnotDraw],
+    tableaux: &[Tableau],
     px_per_mm: f64,
     path: &Path,
 ) -> std::io::Result<()> {
@@ -546,6 +655,9 @@ pub fn write_png_file(
         }
     }
     draw_annots_raster(&mut r, annots, ppm);
+    for t in tableaux {
+        draw_tableau_raster(&mut r, t, ppm);
+    }
     r.write_png(path)
 }
 
@@ -560,7 +672,7 @@ mod tests {
         let p = Page::default();
         let c = Curve::fonction("sin(x)", [0, 0, 204]);
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c, polys)], &[]);
+        let s = svg(&p, &[(c, polys)], &[], &[]);
         assert!(s.contains("viewBox=\"0 0 170.00 120.00\""), "{s}");
         assert!(s.contains("clipPath"));
         assert!(s.contains("#0000cc"));
@@ -576,7 +688,7 @@ mod tests {
         };
         let c = Curve::fonction("log(x)", [204, 0, 0]);
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c, polys)], &[]);
+        let s = svg(&p, &[(c, polys)], &[], &[]);
         assert!(
             s.contains("10³") || s.contains("10²") || s.contains("10¹"),
             "{s}"
@@ -599,7 +711,7 @@ mod tests {
                 b: 2.0,
             }],
         );
-        let s = svg(&p, &[(c, polys)], &annots);
+        let s = svg(&p, &[(c, polys)], &annots, &[]);
         assert!(s.contains("<pattern"), "trame manquante : {s}");
         assert!(s.contains("url(#hatch-0000cc)"), "{s}");
         assert!(s.contains("rotate(45)"), "{s}");
@@ -618,7 +730,7 @@ mod tests {
             &[TangenteAnnot { curve: 0, x: 2.0 }],
             &[],
         );
-        let s = svg(&p, &[(c, polys)], &annots);
+        let s = svg(&p, &[(c, polys)], &annots, &[]);
         assert!(s.matches("<circle").count() == 2, "{s}");
         assert!(s.contains("(1.000 ; 1.000)"), "{s}");
         assert!(s.contains("y = 4.000x"), "{s}");
@@ -632,7 +744,7 @@ mod tests {
         let dir = std::env::temp_dir().join("sqn-test-svg");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.png");
-        write_png_file(&p, &[(c, polys)], &[], 2.0, &path).unwrap();
+        write_png_file(&p, &[(c, polys)], &[], &[], 2.0, &path).unwrap();
         let data = std::fs::read(&path).unwrap();
         assert_eq!(
             &data[..8],
@@ -661,7 +773,7 @@ mod tests {
         let dir = std::env::temp_dir().join("sqn-test-svg");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test-annots.png");
-        write_png_file(&p, &[(c, polys)], &annots, 2.0, &path).unwrap();
+        write_png_file(&p, &[(c, polys)], &annots, &[], 2.0, &path).unwrap();
         let data = std::fs::read(&path).unwrap();
         assert_eq!(
             &data[..8],
@@ -676,11 +788,66 @@ mod tests {
         let mut c = Curve::fonction("sin(x)", [0, 0, 204]);
         c.visible = false;
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c.clone(), polys)], &[]);
+        let s = svg(&p, &[(c.clone(), polys)], &[], &[]);
         assert!(!s.contains("#0000cc"));
         let _ = CurveKind::Fonction {
             expr: String::new(),
         }; // silence clippy
+    }
+
+    #[test]
+    fn tableau_dans_svg_et_png() {
+        let p = Page::default();
+        let mut t = crate::tableau::parse(crate::tableau::EX_VAR4).unwrap();
+        t.dessiner = true;
+        t.x_mm = 10.0;
+        t.y_mm = 12.0;
+        let s = svg(&p, &[], &[], &[t.clone()]);
+        let g = s
+            .split('\n')
+            .find(|l| l.contains("<g transform="))
+            .expect("groupe tableau absent");
+        assert!(
+            g.contains("translate(10.000,12.000)"),
+            "groupe tableau mal placé : {g}"
+        );
+        // valeurs sur les frontières et textes des cases
+        assert!(s.contains(">-1<") && s.contains(">0<"));
+        assert!(s.contains("font-style=\"italic\""));
+        // PNG : la police bitmap doit marquer des pixels de texte
+        let dir = std::env::var("SQN_TMP")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir());
+        let path = dir.join("sqn_test_tableau.png");
+        write_png_file(&p, &[], &[], &[t], 6.0, &path).unwrap();
+        let txt = std::fs::read(&path).unwrap();
+        assert_eq!(&txt[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        if std::env::var("SQN_TMP").is_err() {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    #[test]
+    fn dump_exemples_visuels() {
+        if std::env::var("SQN_TMP").is_err() {
+            return;
+        }
+        let dir = std::path::PathBuf::from(std::env::var("SQN_TMP").unwrap());
+        for (nom, code) in crate::tableau::exemples() {
+            let mut t = crate::tableau::parse(code).unwrap();
+            t.dessiner = true;
+            let (tw, th) = crate::tableau::dimensions(&t);
+            // page ajustée au tableau : aperçu zoomé
+            let p = Page {
+                width_mm: tw + 10.0,
+                height_mm: th + 10.0,
+                ..Page::default()
+            };
+            t.x_mm = 5.0;
+            t.y_mm = 5.0;
+            let path = dir.join(format!("ex-{nom}.png"));
+            write_png_file(&p, &[], &[], &[t], 10.0, &path).unwrap();
+        }
     }
 
     #[test]

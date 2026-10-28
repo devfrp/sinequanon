@@ -14,6 +14,7 @@ mod i18n;
 mod png;
 mod render;
 mod session;
+mod tableau;
 
 use annot::{IntegraleAnnot, PointAnnot, TangenteAnnot};
 use curve::{apply_style, Curve, CurveKind, PALETTE};
@@ -282,17 +283,30 @@ fn exporter(args: &[String]) -> Result<(), String> {
     let annots = annot::draw_list(&o.page, &curves, &points, &tangentes, &integrales);
 
     if let Some(svg) = &o.svg {
-        let n = render::write_svg_file(&o.page, &data, &annots, &PathBuf::from(svg))
+        let n = render::write_svg_file(&o.page, &data, &annots, &[], &PathBuf::from(svg))
             .map_err(|e| format!("écriture de {svg} : {e}"))?;
         println!("✔ {svg} écrit ({} octets)", n);
     } else if o.png.is_none() {
-        let n = render::write_svg_file(&o.page, &data, &annots, &PathBuf::from("sinequanon.svg"))
-            .map_err(|e| format!("écriture de sinequanon.svg : {e}"))?;
+        let n = render::write_svg_file(
+            &o.page,
+            &data,
+            &annots,
+            &[],
+            &PathBuf::from("sinequanon.svg"),
+        )
+        .map_err(|e| format!("écriture de sinequanon.svg : {e}"))?;
         println!("✔ sinequanon.svg écrit ({} octets)", n);
     }
     if let Some(png) = &o.png {
-        render::write_png_file(&o.page, &data, &annots, o.px_par_mm, &PathBuf::from(png))
-            .map_err(|e| format!("écriture de {png} : {e}"))?;
+        render::write_png_file(
+            &o.page,
+            &data,
+            &annots,
+            &[],
+            o.px_par_mm,
+            &PathBuf::from(png),
+        )
+        .map_err(|e| format!("écriture de {png} : {e}"))?;
         println!("✔ {png} écrit");
     }
     Ok(())

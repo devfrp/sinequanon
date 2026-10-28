@@ -8,6 +8,7 @@ use crate::grid::Page;
 use crate::i18n::{self, Lang};
 use crate::render::{self, CurvePolys};
 use crate::session::{self, Session};
+use crate::tableau::{self as tab, Piece, Tableau};
 use eframe::egui::{
     self, Align2, Color32, ComboBox, DragValue, FontId, Pos2, Rect, RichText, Sense, Stroke,
     TextEdit, Ui, Vec2,
@@ -43,31 +44,38 @@ pub struct SqApp {
     pub poly: Vec<CurveResult>,
     /// annotations prêtes à dessiner (recalculées à chaque frame)
     pub annots: Vec<AnnotDraw>,
+    /// tableaux de signes et de variations (v0.3+)
+    pub tableaux: Vec<Tableau>,
+    /// fenêtre d'édition ouverte : index du tableau
+    pub tab_sel: Option<usize>,
 }
 
 impl SqApp {
     pub fn new(lang_flag: Option<Lang>) -> Self {
-        let (page, curves, saved_lang, points, tangentes, integrales) = match session::load() {
-            Some(s) => (
-                s.page,
-                s.curves,
-                Some(s.lang),
-                s.points,
-                s.tangentes,
-                s.integrales,
-            ),
-            None => (
-                Page::default(),
-                vec![
-                    Curve::fonction("sin(x)", PALETTE[0]),
-                    Curve::fonction("x^2/4 - 2", PALETTE[1]),
-                ],
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            ),
-        };
+        let (page, curves, saved_lang, points, tangentes, integrales, tableaux) =
+            match session::load() {
+                Some(s) => (
+                    s.page,
+                    s.curves,
+                    Some(s.lang),
+                    s.points,
+                    s.tangentes,
+                    s.integrales,
+                    s.tableaux,
+                ),
+                None => (
+                    Page::default(),
+                    vec![
+                        Curve::fonction("sin(x)", PALETTE[0]),
+                        Curve::fonction("x^2/4 - 2", PALETTE[1]),
+                    ],
+                    None,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            };
         // le drapeau --lang prime sur la session ; sinon français
         let lang = lang_flag.or(saved_lang).unwrap_or(Lang::Fr);
         let selected = (!curves.is_empty()).then_some(0usize);
@@ -86,6 +94,8 @@ impl SqApp {
             dirty: false,
             poly: Vec::new(),
             annots: Vec::new(),
+            tableaux,
+            tab_sel: None,
         }
     }
 
@@ -165,6 +175,8 @@ impl SqApp {
                         self.section_proprietes(ui);
                         ui.separator();
                         self.section_annotations(ui);
+                        ui.separator();
+                        self.section_tableaux(ui);
                         ui.separator();
                         self.section_repere(ui);
                         ui.separator();
@@ -530,6 +542,224 @@ impl SqApp {
         }
     }
 
+    /// Section « Tableaux de signes et de variations » du panneau latéral.
+    fn section_tableaux(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.horizontal(|ui| {
+            ui.strong(t.tableaux);
+            if ui.button(t.m_tableau).clicked() {
+                // modèle : étiquette + 3 colonnes vides, sur 2 rangées
+                let row = tab::rangee_vers_code(&tab::Rangee {
+                    cases: vec![tab::Case::default(); 3],
+                    ..Default::default()
+                });
+                let code = format!("{row}\n{row}");
+                let rows = tab::parse(&code).map(|t| t.rows).unwrap_or_default();
+                self.tableaux.push(Tableau {
+                    code,
+                    rows,
+                    ..Default::default()
+                });
+                self.tab_sel = Some(self.tableaux.len() - 1);
+                self.dirty = true;
+            }
+        });
+        let mut to_delete: Option<usize> = None;
+        let mut to_toggle: Option<usize> = None;
+        for (i, tabl) in self.tableaux.iter().enumerate() {
+            let dess = tabl.dessiner;
+            ui.horizontal(|ui| {
+                let vis = if dess { "◉" } else { "○" };
+                if ui
+                    .add(egui::Label::new(RichText::new(vis).size(16.0)).sense(Sense::click()))
+                    .clicked()
+                {
+                    to_toggle = Some(i);
+                }
+                if ui
+                    .add(
+                        egui::Label::new(RichText::new(format!("Tableau {}", i + 1)).small())
+                            .sense(Sense::click()),
+                    )
+                    .clicked()
+                {
+                    self.tab_sel = Some(i);
+                }
+                if ui.small_button("✕").clicked() {
+                    to_delete = Some(i);
+                }
+            });
+        }
+        if let Some(i) = to_toggle {
+            if let Some(x) = self.tableaux.get_mut(i) {
+                x.dessiner = !x.dessiner;
+                self.dirty = true;
+            }
+        }
+        if let Some(i) = to_delete {
+            self.tableaux.remove(i);
+            if self.tab_sel == Some(i) {
+                self.tab_sel = None;
+            }
+            self.dirty = true;
+        }
+    }
+
+    /// Fenêtre d'édition d'un tableau (code, boutons, exemples, couleurs).
+    fn fenetre_tableau(&mut self, ctx: &egui::Context) {
+        let t = i18n::table(self.lang);
+        let Some(idx) = self.tab_sel else { return };
+        if self.tableaux.get(idx).is_none() {
+            self.tab_sel = None;
+            return;
+        }
+        let mut ouverte = true;
+        egui::Window::new(format!("{} — {}", t.tableaux, idx + 1))
+            .open(&mut ouverte)
+            .resizable(true)
+            .default_width(600.0)
+            .show(ctx, |ui| {
+                let tabl = &mut self.tableaux[idx];
+                ui.label(t.code_tableau);
+                let re = ui.add(
+                    TextEdit::multiline(&mut tabl.code)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_rows(6)
+                        .desired_width(560.0),
+                );
+                if re.changed() {
+                    if let Ok(nt) = tab::parse(&tabl.code) {
+                        tabl.rows = nt.rows;
+                    }
+                    self.dirty = true;
+                }
+                match tab::parse(&tabl.code) {
+                    Ok(ta) => {
+                        let (w, h) = tab::dimensions(&ta);
+                        ui.label(RichText::new(format!("✔ {:.0} × {:.0} mm", w, h)).small());
+                    }
+                    Err(e) => {
+                        ui.label(RichText::new(format!("✖ {e}")).color(Color32::RED).small());
+                    }
+                }
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button(t.plus_lig).clicked() {
+                        let n = tabl.rows.first().map(|r| r.cases.len()).unwrap_or(3).max(2);
+                        let row = tab::rangee_vers_code(&tab::Rangee {
+                            cases: vec![tab::Case::default(); n],
+                            ..Default::default()
+                        });
+                        let mut c = tabl.code.trim_end().to_string();
+                        if !c.is_empty() {
+                            c.push('\n');
+                        }
+                        c.push_str(&row);
+                        Self::maj_code(tabl, c);
+                        self.dirty = true;
+                    }
+                    if ui.button(t.moins_lig).clicked() {
+                        let c = tabl.code.trim_end().to_string();
+                        let c = match c.rfind('\n') {
+                            Some(pos) => c[..pos].to_string(),
+                            None => String::new(),
+                        };
+                        Self::maj_code(tabl, c);
+                        self.dirty = true;
+                    }
+                    if ui.button(t.plus_col).clicked() {
+                        if let Ok(c) = tab::ajuster_colonnes(&tabl.code, 1) {
+                            Self::maj_code(tabl, c);
+                            self.dirty = true;
+                        }
+                    }
+                    if ui.button(t.moins_col).clicked() {
+                        if let Ok(c) = tab::ajuster_colonnes(&tabl.code, -1) {
+                            Self::maj_code(tabl, c);
+                            self.dirty = true;
+                        }
+                    }
+                    if ui.button(t.egaliser).clicked() {
+                        if let Ok(c) = tab::egaliser(&tabl.code) {
+                            Self::maj_code(tabl, c);
+                            self.dirty = true;
+                        }
+                    }
+                    if ui.button(t.effacer).clicked() {
+                        Self::maj_code(tabl, String::new());
+                        self.dirty = true;
+                    }
+                });
+                // insertion de fragments à la fin de la dernière ligne
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(t.inserer);
+                    for (lbl, tok) in [
+                        ("+∞", "+\\infty"),
+                        ("−∞", "-\\infty"),
+                        ("√", "\\sqrt{}"),
+                        ("a/b", "\\frac{}{}"),
+                        ("‖", "||"),
+                        ("|", "|"),
+                        ("|0", "|0"),
+                        ("↗", "/:>"),
+                        ("↘", "\\:>"),
+                        ("→", "_:>"),
+                        ("//", "//"),
+                    ] {
+                        if ui.small_button(lbl).clicked() {
+                            let mut c = tabl.code.trim_end().to_string();
+                            c.push_str(tok);
+                            Self::maj_code(tabl, c);
+                            self.dirty = true;
+                        }
+                    }
+                });
+                // exemples de l'original (Var1..Var8, Sgn, Abs)
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(t.exemples);
+                    for (nom, code) in tab::exemples() {
+                        if ui.small_button(nom).clicked() {
+                            Self::maj_code(tabl, code.trim().to_string());
+                            self.dirty = true;
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(t.couleur_traits);
+                    ui.color_edit_button_srgb(&mut tabl.couleur_traits);
+                    ui.label(t.couleur_textes);
+                    ui.color_edit_button_srgb(&mut tabl.couleur_textes);
+                });
+                ui.horizontal(|ui| {
+                    ui.label(t.position_t);
+                    ui.add(
+                        DragValue::new(&mut tabl.x_mm)
+                            .range(-50.0..=400.0)
+                            .suffix(" x"),
+                    );
+                    ui.add(
+                        DragValue::new(&mut tabl.y_mm)
+                            .range(-50.0..=400.0)
+                            .suffix(" y"),
+                    );
+                    ui.checkbox(&mut tabl.dessiner, t.dessiner_t)
+                        .changed()
+                        .then(|| self.dirty = true);
+                });
+            });
+        if !ouverte {
+            self.tab_sel = None;
+            self.dirty = true;
+        }
+    }
+
+    /// Remplace le code d'un tableau et ré-analyse ses rangées.
+    fn maj_code(tabl: &mut Tableau, code: String) {
+        tabl.code = code;
+        if let Ok(nt) = tab::parse(&tabl.code) {
+            tabl.rows = nt.rows;
+        }
+    }
+
     fn section_repere(&mut self, ui: &mut Ui) {
         let t = i18n::table(self.lang);
         ui.strong(t.repere);
@@ -615,7 +845,8 @@ impl SqApp {
             if ui.button("SVG (sinequanon.svg)").clicked() {
                 let data = self.export_data();
                 let path = PathBuf::from("sinequanon.svg");
-                match render::write_svg_file(&self.page, &data, &self.annots, &path) {
+                match render::write_svg_file(&self.page, &data, &self.annots, &self.tableaux, &path)
+                {
                     Ok(n) => self.set_status(format!("✔ {} écrit ({} octets)", path.display(), n)),
                     Err(e) => self.set_status(format!("✖ Échec SVG : {e}")),
                 }
@@ -629,6 +860,7 @@ impl SqApp {
                     &self.page,
                     &data,
                     &self.annots,
+                    &self.tableaux,
                     self.px_per_mm as f64,
                     &path,
                 ) {
@@ -712,6 +944,7 @@ impl SqApp {
         self.dessine_axes(&painter, page_rect, ppm);
         self.dessine_courbes(&painter, page_rect, ppm);
         self.dessine_annots(&painter, page_rect, ppm);
+        self.dessine_tableaux(&painter, page_rect, ppm);
 
         // lecture des coordonnées sous le curseur
         if let Some(pos) = hover {
@@ -729,6 +962,57 @@ impl SqApp {
                     FontId::monospace(12.0),
                     Color32::from_rgb(40, 40, 60),
                 );
+            }
+        }
+    }
+
+    /// Dessine les tableaux (aperçu GUI : segments + textes).
+    fn dessine_tableaux(&self, painter: &egui::Painter, page_rect: Rect, ppm: f32) {
+        for tabl in &self.tableaux {
+            if !tabl.dessiner {
+                continue;
+            }
+            let ct = Color32::from_rgb(
+                tabl.couleur_traits[0],
+                tabl.couleur_traits[1],
+                tabl.couleur_traits[2],
+            );
+            let cx = Color32::from_rgb(
+                tabl.couleur_textes[0],
+                tabl.couleur_textes[1],
+                tabl.couleur_textes[2],
+            );
+            let px = |x: f64, y: f64| {
+                Pos2::new(
+                    page_rect.left() + (tabl.x_mm + x) as f32 * ppm,
+                    page_rect.top() + (tabl.y_mm + y) as f32 * ppm,
+                )
+            };
+            for piece in tab::pieces(tabl) {
+                match piece {
+                    Piece::Ligne { x0, y0, x1, y1, w } => {
+                        painter.line_segment(
+                            [px(x0, y0), px(x1, y1)],
+                            Stroke::new((w as f32 * ppm).clamp(1.0, 4.0), ct),
+                        );
+                    }
+                    Piece::Texte {
+                        x,
+                        y,
+                        size,
+                        txt,
+                        italique: _,
+                    } => {
+                        // ancre bas-gauche ≈ ligne de base + jambage
+                        painter.text(
+                            px(x, y + 0.28 * size),
+                            Align2::LEFT_BOTTOM,
+                            txt,
+                            FontId::proportional(size as f32 * ppm),
+                            cx,
+                        );
+                    }
+                }
             }
         }
     }
@@ -1097,6 +1381,7 @@ impl eframe::App for SqApp {
         self.refresh(cols);
         self.panneau_lateral(ctx);
         egui::CentralPanel::default().show(ctx, |ui| self.zone_dessin(ui));
+        self.fenetre_tableau(ctx);
         // sauvegarde automatique si nécessaire
         if self.dirty {
             let s = Session {
@@ -1107,6 +1392,7 @@ impl eframe::App for SqApp {
                 points: self.points.clone(),
                 tangentes: self.tangentes.clone(),
                 integrales: self.integrales.clone(),
+                tableaux: self.tableaux.clone(),
             };
             if session::save(&s).is_ok() {
                 self.dirty = false;
