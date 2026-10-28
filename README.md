@@ -40,7 +40,8 @@ curl -fsSL https://raw.githubusercontent.com/devfrp/sinequanon/main/install.sh |
   fonctionne sur Debian, Ubuntu, Fedora, Arch, openSUSE, Alpine, etc.
 - Somme SHA-256 vérifiée automatiquement ; installation dans `/usr/local/bin`
   (ou `~/.local/bin` sans droits root).
-- **Dépôt privé** : ajoutez `GITHUB_TOKEN=…` avant le `curl` (ou connectez `gh auth login`).
+- Dépôt **public** : aucun token requis. Sur un miroir privé, ajoutez
+  `GITHUB_TOKEN=…` avant le `curl` (ou connectez `gh auth login`).
 - Alternatives : `curl … | bash -s -- --bin-dir ~/bin` ou `--version v0.1.0`.
 
 ### Windows — `.exe`

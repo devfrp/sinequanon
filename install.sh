@@ -8,8 +8,8 @@
 #   --version v0.1.0   installer une version précise
 #   --bin-dir /chemin  répertoire d'installation (défaut : /usr/local/bin ou ~/.local/bin)
 #
-# Dépôt privé : exportez GITHUB_TOKEN (ou connectez `gh login`) pour
-# télécharger les fichiers.
+# Dépôt public : aucun token requis. Pour un miroir privé, exportez
+# GITHUB_TOKEN (ou connectez `gh login`).
 
 set -euo pipefail
 
@@ -97,7 +97,7 @@ if [ -z "$VERSION" ]; then
         VERSION="$(grep -m1 '"tag_name"' "$TMP/release.json" 2>/dev/null | cut -d'"' -f4 || true)"
     fi
     [ -n "$VERSION" ] || die "impossible de déterminer la dernière version
-(dépôt privé ? exportez GITHUB_TOKEN, ou lancez : gh auth login)"
+(dépôt privé (miroir) ? exportez GITHUB_TOKEN, ou lancez : gh auth login)"
 fi
 info "Version : ${VERSION}"
 
