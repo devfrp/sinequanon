@@ -6,8 +6,8 @@
 #                             d'une release avec sommes SHA-256
 #
 # NB : pas d'actions/upload-artifact — chaque job publie ses fichiers
-# directement sur la release (brouillon) pour ne pas consommer le quota de
-# stockage d'artefacts des dépôts privés.
+# directement sur la release (publiée dès le job test) pour ne pas consommer
+# le quota de stockage d'artefacts des dépôts privés.
 name: build
 
 on:
@@ -37,15 +37,16 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests
         run: cargo test --quiet
-      - name: Préparer la release (brouillon)
+      - name: Créer la release si absente
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # release PUBLIÉE (pas brouillon) : gh release upload la résout par
+          # /releases/tags/, ce qui échoue sur un brouillon depuis les runners
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             || gh release create "$GITHUB_REF_NAME" \
                  --repo "$GITHUB_REPOSITORY" \
-                 --draft \
                  --title "Sine qua non $GITHUB_REF_NAME" \
                  --generate-notes
 
@@ -110,6 +111,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
 
   macos:
@@ -149,6 +151,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
 
   finalize:
@@ -167,6 +170,6 @@ jobs:
           sha256sum * > SHA256SUMS
           cd ..
           gh release upload "$GITHUB_REF_NAME" dist/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --latest
           echo "=== Release publiée ==="
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
