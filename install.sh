@@ -7,6 +7,7 @@
 # Options :
 #   --version v0.1.0   installer une version précise
 #   --bin-dir /chemin  répertoire d'installation (défaut : /usr/local/bin ou ~/.local/bin)
+#   --static           binaire statique musl (CLI/serveur ; sans interface graphique)
 #
 # Dépôt public : aucun token requis. Pour un miroir privé, exportez
 # GITHUB_TOKEN (ou connectez `gh login`).
@@ -17,9 +18,10 @@ REPO="devfrp/sinequanon"
 PROG="sinequanon"
 VERSION=""
 BIN_DIR=""
+STATIC=0
 
 usage() {
-    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
@@ -30,6 +32,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --version) [ $# -ge 2 ] || die "--version attend une valeur"; VERSION="$2"; shift 2 ;;
         --bin-dir) [ $# -ge 2 ] || die "--bin-dir attend une valeur"; BIN_DIR="$2"; shift 2 ;;
+        --static) STATIC=1; shift ;;
         -h|--help|aide) usage ;;
         *) die "option inconnue : $1 (voir --help)" ;;
     esac
@@ -63,6 +66,19 @@ if command -v curl >/dev/null 2>&1; then
             curl -fsSL "$1" -o "$2"
         fi
     }
+    fetch_octet() {
+        # $1 = id d'asset, $2 = destination. URL à ID unique : insensible aux
+        # proxys/CDN qui épinglent les redirects releases/download/ après un
+        # re-upload d'asset au même nom.
+        if [ -n "${GITHUB_TOKEN:-}" ]; then
+            curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                 -H "Accept: application/octet-stream" \
+                 "https://api.github.com/repos/${REPO}/releases/assets/$1" -o "$2"
+        else
+            curl -fsSL -H "Accept: application/octet-stream" \
+                 "https://api.github.com/repos/${REPO}/releases/assets/$1" -o "$2"
+        fi
+    }
 elif command -v wget >/dev/null 2>&1; then
     fetch() { wget -qO "$2" "$1"; }
     fetch_api() {
@@ -70,6 +86,16 @@ elif command -v wget >/dev/null 2>&1; then
             wget -qO "$2" --header="Authorization: Bearer ${GITHUB_TOKEN}" "$1"
         else
             wget -qO "$2" "$1"
+        fi
+    }
+    fetch_octet() {
+        if [ -n "${GITHUB_TOKEN:-}" ]; then
+            wget -qO "$2" --header="Authorization: Bearer ${GITHUB_TOKEN}" \
+                 --header="Accept: application/octet-stream" \
+                 "https://api.github.com/repos/${REPO}/releases/assets/$1"
+        else
+            wget -qO "$2" --header="Accept: application/octet-stream" \
+                 "https://api.github.com/repos/${REPO}/releases/assets/$1"
         fi
     }
 else
@@ -103,9 +129,14 @@ info "Version : ${VERSION}"
 
 if [ "$OS" = "macos" ]; then
     CANDIDATES="${PROG}-macos-universal.tar.gz"
+elif [ "$STATIC" = 1 ]; then
+    # statique musl : CLI/serveur/conteneurs uniquement — un binaire 100 %
+    # statique ne peut pas dlopen les bibliothèques système (wayland, GL),
+    # donc l'interface graphique n'y fonctionne pas.
+    CANDIDATES="${PROG}-${OS}-${ARCH}-musl.tar.gz"
 else
-    # binaire statique musl en priorité, fallback glibc
-    CANDIDATES="${PROG}-${OS}-${ARCH}-musl.tar.gz ${PROG}-${OS}-${ARCH}-gnu.tar.gz"
+    # glibc en priorité : interface graphique fonctionnelle (dlopen wayland/GL)
+    CANDIDATES="${PROG}-${OS}-${ARCH}-gnu.tar.gz ${PROG}-${OS}-${ARCH}-musl.tar.gz"
 fi
 
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
@@ -115,6 +146,15 @@ download_asset() {
         gh release download "$VERSION" --repo "$REPO" --pattern "$1" --dir "$TMP" >/dev/null 2>&1 || return 1
         [ "$2" = "$TMP/$1" ] || mv "$TMP/$1" "$2" || return 1
     else
+        # 1) via l'API, par ID d'asset (robuste aux caches de redirects)
+        if fetch_api "https://api.github.com/repos/${REPO}/releases/tags/${VERSION}" "$TMP/rel.json" 2>/dev/null; then
+            id="$(tr -d ' \t\n' < "$TMP/rel.json" | sed 's/},{/}\n{/g' \
+                | grep -F "\"name\":\"$1\"" | grep -o '"id":[0-9]*' | head -1 | cut -d'"' -f4 || true)"
+            if [ -n "$id" ] && fetch_octet "$id" "$2"; then
+                return 0
+            fi
+        fi
+        # 2) secours : URL publique de téléchargement
         fetch_api "${BASE_URL}/$1" "$2" || return 1
     fi
 }
