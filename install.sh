@@ -76,8 +76,10 @@ else
     die "curl ou wget est requis"
 fi
 
-# dépôt privé : gh connecté → passer par l'API
-if [ -z "${GITHUB_TOKEN:-}" ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+# gh connecté → téléchargements via gh : gère les dépôts privés ET les
+# releases encore en brouillon (l'URL publique releases/download/ ne sert
+# pas les assets d'un brouillon, même avec un token).
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     USE_GH=1
 else
     USE_GH=0
