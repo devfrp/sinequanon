@@ -33,7 +33,7 @@ courbes de Bézier.
 ### Linux — toute distribution (une ligne)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/devfrp/Installe_Sinequanon/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/devfrp/sinequanon/main/install.sh | bash
 ```
 
 - Priorité au binaire **statique musl** (x86_64 et aarch64) : aucun paquet à installer,
@@ -46,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/devfrp/Installe_Sinequanon/main/ins
 ### Windows — `.exe`
 
 Téléchargez `sinequanon-windows-x86_64.exe` sur la page
-[Releases](https://github.com/devfrp/Installe_Sinequanon/releases) (build MSVC
+[Releases](https://github.com/devfrp/sinequanon/releases) (build MSVC
 automatique par GitHub Actions).
 
 ### macOS — binaire universel

@@ -2,7 +2,7 @@
 # Installation de Sine qua non (Rust) depuis les versions GitHub.
 #
 # Utilisation :
-#   curl -fsSL https://raw.githubusercontent.com/devfrp/Installe_Sinequanon/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/devfrp/sinequanon/main/install.sh | bash
 #
 # Options :
 #   --version v0.1.0   installer une version précise
@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-REPO="devfrp/Installe_Sinequanon"
+REPO="devfrp/sinequanon"
 PROG="sinequanon"
 VERSION=""
 BIN_DIR=""
