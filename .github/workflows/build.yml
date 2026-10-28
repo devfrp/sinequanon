@@ -100,11 +100,14 @@ jobs:
           EXT=""
           case "${{ matrix.target }}" in *windows*) EXT=".exe" ;; esac
           SRC="target/${{ matrix.target }}/release/sinequanon${EXT}"
-          cp "$SRC" "dist/sinequanon${EXT}"
           case "${{ matrix.artifact }}" in
             *.tar.gz)
+              cp "$SRC" "dist/sinequanon${EXT}"
               tar -czf "dist/${{ matrix.artifact }}" -C dist "sinequanon${EXT}"
               rm "dist/sinequanon${EXT}"
+              ;;
+            *)
+              cp "$SRC" "dist/${{ matrix.artifact }}"
               ;;
           esac
       - name: Publier sur la release
