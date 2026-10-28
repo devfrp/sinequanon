@@ -110,18 +110,19 @@ fi
 
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
 download_asset() {
+    # $1 = nom de l'asset, $2 = fichier de destination
     if [ "$USE_GH" = 1 ]; then
         gh release download "$VERSION" --repo "$REPO" --pattern "$1" --dir "$TMP" >/dev/null 2>&1 || return 1
-        mv "$TMP/$1" "$TMP/asset" || return 1
+        [ "$2" = "$TMP/$1" ] || mv "$TMP/$1" "$2" || return 1
     else
-        fetch_api "${BASE_URL}/$1" "$TMP/asset" || return 1
+        fetch_api "${BASE_URL}/$1" "$2" || return 1
     fi
 }
 
 ASSET=""
 for c in $CANDIDATES; do
     info "Essai de ${c}…"
-    if download_asset "$c"; then
+    if download_asset "$c" "$TMP/asset"; then
         ASSET="$c"
         break
     fi
@@ -131,8 +132,8 @@ done
 
 # --- somme de contrôle --------------------------------------------------------
 
-if download_asset "SHA256SUMS"; then
-    EXPECTED="$(grep " ${ASSET}\$" "$TMP/asset" | awk '{print $1}' | head -1 || true)"
+if download_asset "SHA256SUMS" "$TMP/SHA256SUMS"; then
+    EXPECTED="$(grep " ${ASSET}\$" "$TMP/SHA256SUMS" | awk '{print $1}' | head -1 || true)"
     if [ -n "$EXPECTED" ]; then
         ACTUAL="$(sha256sum "$TMP/asset" 2>/dev/null | awk '{print $1}' \
             || shasum -a 256 "$TMP/asset" | awk '{print $1}' \
