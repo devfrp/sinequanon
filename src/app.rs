@@ -951,9 +951,13 @@ impl SqApp {
             {
                 let col = Color32::from_rgba_unmultiplied(color[0], color[1], color[2], 42);
                 // remplissage : ruban vertical (quad par échantillon consécutif)
-                if path.len() >= 3 {
+                let samples = if path.len() >= 3 {
+                    &path[1..path.len() - 1]
+                } else {
+                    &[][..]
+                };
+                if samples.len() >= 2 {
                     let axis_y = path[0].1;
-                    let samples = &path[1..path.len() - 1];
                     let mut mesh = egui::Mesh::default();
                     for &(mx, my) in samples {
                         mesh.colored_vertex(to_px((mx, axis_y)), col);
