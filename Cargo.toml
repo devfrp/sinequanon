@@ -1,9 +1,9 @@
 [package]
 name = "sinequanon"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.80"
-description = "Sine qua non — traceur de courbes, réécriture indépendante en Rust (cœur v0.1)"
+description = "Sine qua non — traceur de courbes, réécriture indépendante en Rust (cœur graphique v0.2 : annotations, bilingue)"
 license = "MIT"
 authors = ["devfrp"]
 

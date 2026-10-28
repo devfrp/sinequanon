@@ -1,8 +1,11 @@
 //! Interface graphique (egui/eframe) — feuille quadrillée 5 × 5 mm,
-//! liste de courbes, repère paramétrable et export SVG/PNG.
+//! liste de courbes, repère paramétrable, annotations (points, tangentes,
+//! intégrales hachurées) et export SVG/PNG.
 
+use crate::annot::{self, draw_list, AnnotDraw, IntegraleAnnot, PointAnnot, TangenteAnnot};
 use crate::curve::{apply_style, sample_curve, Curve, CurveKind, KindId, PALETTE};
 use crate::grid::Page;
+use crate::i18n::{self, Lang};
 use crate::render::{self, CurvePolys};
 use crate::session::{self, Session};
 use eframe::egui::{
@@ -20,6 +23,14 @@ pub struct SqApp {
     pub page: Page,
     pub curves: Vec<Curve>,
     pub selected: Option<usize>,
+    /// langue de l'interface
+    pub lang: Lang,
+    /// points placés sur les courbes
+    pub points: Vec<PointAnnot>,
+    /// tangentes (fonctions)
+    pub tangentes: Vec<TangenteAnnot>,
+    /// intégrales hachurées (fonctions)
+    pub integrales: Vec<IntegraleAnnot>,
     /// zoom d'affichage (1 = page entière visible)
     pub zoom: f32,
     /// décalage de la page dans le panneau central, en px
@@ -30,31 +41,51 @@ pub struct SqApp {
     pub dirty: bool,
     /// polylignes calculées (mm), alignées sur `curves`
     pub poly: Vec<CurveResult>,
+    /// annotations prêtes à dessiner (recalculées à chaque frame)
+    pub annots: Vec<AnnotDraw>,
 }
 
 impl SqApp {
-    pub fn new() -> Self {
-        let (page, curves) = match session::load() {
-            Some(s) => (s.page, s.curves),
+    pub fn new(lang_flag: Option<Lang>) -> Self {
+        let (page, curves, saved_lang, points, tangentes, integrales) = match session::load() {
+            Some(s) => (
+                s.page,
+                s.curves,
+                Some(s.lang),
+                s.points,
+                s.tangentes,
+                s.integrales,
+            ),
             None => (
                 Page::default(),
                 vec![
                     Curve::fonction("sin(x)", PALETTE[0]),
                     Curve::fonction("x^2/4 - 2", PALETTE[1]),
                 ],
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
             ),
         };
+        // le drapeau --lang prime sur la session ; sinon français
+        let lang = lang_flag.or(saved_lang).unwrap_or(Lang::Fr);
         let selected = (!curves.is_empty()).then_some(0usize);
         Self {
             page,
             curves,
             selected,
+            lang,
+            points,
+            tangentes,
+            integrales,
             zoom: 1.0,
             view_offset: Vec2::ZERO,
             px_per_mm: 4.0,
             status: None,
             dirty: false,
             poly: Vec::new(),
+            annots: Vec::new(),
         }
     }
 
@@ -62,13 +93,20 @@ impl SqApp {
         self.status = Some((msg, Instant::now()));
     }
 
-    /// Recalcule toutes les polylignes (appelé à chaque frame).
+    /// Recalcule toutes les polylignes et les annotations (à chaque frame).
     fn refresh(&mut self, cols: usize) {
         let mut poly = Vec::with_capacity(self.curves.len());
         for c in &self.curves {
             poly.push(sample_curve(c, &self.page, cols, 4000).map(|ps| apply_style(ps, c.style)));
         }
         self.poly = poly;
+        self.annots = draw_list(
+            &self.page,
+            &self.curves,
+            &self.points,
+            &self.tangentes,
+            &self.integrales,
+        );
     }
 
     /// Données prêtes pour l'export (courbes visibles + polylignes valides).
@@ -86,6 +124,7 @@ impl SqApp {
     }
 
     fn panneau_lateral(&mut self, ctx: &egui::Context) {
+        let t = i18n::table(self.lang);
         egui::SidePanel::left("outils")
             .resizable(true)
             .default_width(340.0)
@@ -97,15 +136,35 @@ impl SqApp {
                             ui.heading("Sine qua non");
                             ui.small(format!("v{}", env!("CARGO_PKG_VERSION")));
                         });
-                        ui.label(
-                            RichText::new("Réécriture en Rust — traceur de courbes")
-                                .small()
-                                .weak(),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(t.sous_titre).small().weak());
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ComboBox::from_label(t.langue)
+                                        .selected_text(self.lang.label())
+                                        .width(72.0)
+                                        .show_ui(ui, |ui| {
+                                            for l in Lang::ALL {
+                                                if ui
+                                                    .selectable_label(self.lang == l, l.label())
+                                                    .clicked()
+                                                    && self.lang != l
+                                                {
+                                                    self.lang = l;
+                                                    self.dirty = true;
+                                                }
+                                            }
+                                        });
+                                },
+                            );
+                        });
                         ui.separator();
                         self.section_liste(ui);
                         ui.separator();
                         self.section_proprietes(ui);
+                        ui.separator();
+                        self.section_annotations(ui);
                         ui.separator();
                         self.section_repere(ui);
                         ui.separator();
@@ -115,18 +174,19 @@ impl SqApp {
     }
 
     fn section_liste(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
         ui.horizontal(|ui| {
-            ui.strong("Courbes");
-            ui.menu_button("➕ Ajouter", |ui| {
+            ui.strong(t.courbes);
+            ui.menu_button(t.ajouter, |ui| {
                 let n = self.curves.len();
                 let color = PALETTE[n % PALETTE.len()];
-                if ui.button("Fonction  y = f(x)").clicked() {
+                if ui.button(t.m_fonction).clicked() {
                     self.curves.push(Curve::fonction("sin(x)", color));
                     self.selected = Some(self.curves.len() - 1);
                     self.dirty = true;
                     ui.close_menu();
                 }
-                if ui.button("Courbe paramétrée").clicked() {
+                if ui.button(t.m_param).clicked() {
                     self.curves.push(Curve::with_kind(
                         CurveKind::Parametree {
                             xt: "cos(t)".into(),
@@ -140,7 +200,7 @@ impl SqApp {
                     self.dirty = true;
                     ui.close_menu();
                 }
-                if ui.button("Courbe polaire").clicked() {
+                if ui.button(t.m_polaire).clicked() {
                     self.curves.push(Curve::with_kind(
                         CurveKind::Polaire {
                             r: "1+cos(theta)".into(),
@@ -154,7 +214,7 @@ impl SqApp {
                     ui.close_menu();
                 }
             });
-            if ui.button("Vider").clicked() {
+            if ui.button(t.vider).clicked() {
                 self.curves.clear();
                 self.selected = None;
                 self.dirty = true;
@@ -215,9 +275,10 @@ impl SqApp {
     }
 
     fn section_proprietes(&mut self, ui: &mut Ui) {
-        ui.strong("Propriétés de la courbe");
+        let t = i18n::table(self.lang);
+        ui.strong(t.proprietes);
         let Some(sel) = self.selected else {
-            ui.label(RichText::new("Aucune courbe sélectionnée.").weak().small());
+            ui.label(RichText::new(t.aucune).weak().small());
             return;
         };
         let Some(curve) = self.curves.get_mut(sel) else {
@@ -227,17 +288,17 @@ impl SqApp {
 
         // nature
         let kind_id = curve.kind.kind_id();
-        ComboBox::from_label("Nature")
+        ComboBox::from_label(t.nature)
             .selected_text(match kind_id {
-                KindId::Fonction => "Fonction y = f(x)",
-                KindId::Parametree => "Paramétrée",
-                KindId::Polaire => "Polaire",
+                KindId::Fonction => t.l_fonction,
+                KindId::Parametree => t.l_param,
+                KindId::Polaire => t.l_polaire,
             })
             .show_ui(ui, |ui| {
                 for (id, name) in [
-                    (KindId::Fonction, "Fonction y = f(x)"),
-                    (KindId::Parametree, "Paramétrée"),
-                    (KindId::Polaire, "Polaire"),
+                    (KindId::Fonction, t.l_fonction),
+                    (KindId::Parametree, t.l_param),
+                    (KindId::Polaire, t.l_polaire),
                 ] {
                     if ui.selectable_label(kind_id == id, name).clicked() && kind_id != id {
                         curve.kind = curve.kind.convert(id);
@@ -279,11 +340,11 @@ impl SqApp {
                     }
                 });
                 ui.horizontal(|ui| {
-                    ui.label("t de");
+                    ui.label(t.t_de);
                     if ui.add(DragValue::new(tmin).speed(0.1)).changed() {
                         self.dirty = true;
                     }
-                    ui.label("à");
+                    ui.label(t.a);
                     if ui.add(DragValue::new(tmax).speed(0.1)).changed() {
                         self.dirty = true;
                     }
@@ -300,11 +361,11 @@ impl SqApp {
                     }
                 });
                 ui.horizontal(|ui| {
-                    ui.label("θ de");
+                    ui.label(t.theta_de);
                     if ui.add(DragValue::new(tmin).speed(0.1)).changed() {
                         self.dirty = true;
                     }
-                    ui.label("à");
+                    ui.label(t.a);
                     if ui.add(DragValue::new(tmax).speed(0.1)).changed() {
                         self.dirty = true;
                     }
@@ -314,7 +375,7 @@ impl SqApp {
 
         // style
         ui.horizontal(|ui| {
-            ui.label("Couleur :");
+            ui.label(t.couleur);
             let old = Color32::from_rgb(curve.color[0], curve.color[1], curve.color[2]);
             let mut c = old;
             ui.color_edit_button_srgba(&mut c);
@@ -322,7 +383,7 @@ impl SqApp {
                 curve.color = [c.r(), c.g(), c.b()];
                 self.dirty = true;
             }
-            ui.label("Épaisseur :");
+            ui.label(t.epaisseur);
             if ui
                 .add(egui::Slider::new(&mut curve.thickness, 0.5..=6.0))
                 .changed()
@@ -331,11 +392,11 @@ impl SqApp {
             }
         });
         ui.horizontal(|ui| {
-            ui.label("Style :");
+            ui.label(t.style);
             for (st, name) in [
-                (crate::curve::LineStyle::Continu, "Continu"),
-                (crate::curve::LineStyle::Tirets, "Tirets"),
-                (crate::curve::LineStyle::Pointilles, "Pointillés"),
+                (crate::curve::LineStyle::Continu, t.continu),
+                (crate::curve::LineStyle::Tirets, t.tirets),
+                (crate::curve::LineStyle::Pointilles, t.pointilles),
             ] {
                 if ui.selectable_label(curve.style == st, name).clicked() && curve.style != st {
                     curve.style = st;
@@ -354,10 +415,126 @@ impl SqApp {
         }
     }
 
-    fn section_repere(&mut self, ui: &mut Ui) {
-        ui.strong("Repère");
+    /// Panneau des annotations : points, tangentes, intégrales hachurées.
+    fn section_annotations(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.strong(t.annotations);
+        let nc = self.curves.len().saturating_sub(1) as i64;
+
+        // --- points ---
         ui.horizontal(|ui| {
-            ui.label("Origine (");
+            ui.label(RichText::new(t.points).strong().small());
+            if !self.curves.is_empty() && ui.small_button(t.aj_point).clicked() {
+                self.points.push(PointAnnot {
+                    curve: self.selected.unwrap_or(0),
+                    x: 1.0,
+                });
+                self.dirty = true;
+            }
+        });
+        let mut del_point: Option<usize> = None;
+        for i in 0..self.points.len() {
+            let p = &mut self.points[i];
+            ui.horizontal(|ui| {
+                ui.label(t.courbe);
+                ui.add(DragValue::new(&mut p.curve).range(0..=nc.max(0)));
+                ui.label("x");
+                if ui.add(DragValue::new(&mut p.x).speed(0.1)).changed() {
+                    self.dirty = true;
+                }
+                if let Some((ux, uy)) = annot::point_value(&self.curves, p) {
+                    ui.small(format!("({ux:.3} ; {uy:.3})"));
+                }
+                if ui.small_button("✕").clicked() {
+                    del_point = Some(i);
+                }
+            });
+        }
+        if let Some(i) = del_point {
+            self.points.remove(i);
+            self.dirty = true;
+        }
+
+        // --- tangentes ---
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(t.tangentes).strong().small());
+            if !self.curves.is_empty() && ui.small_button(t.aj_tangente).clicked() {
+                self.tangentes.push(TangenteAnnot {
+                    curve: self.selected.unwrap_or(0),
+                    x: 1.0,
+                });
+                self.dirty = true;
+            }
+        });
+        let mut del_tan: Option<usize> = None;
+        for i in 0..self.tangentes.len() {
+            let tg = &mut self.tangentes[i];
+            ui.horizontal(|ui| {
+                ui.label(t.courbe);
+                ui.add(DragValue::new(&mut tg.curve).range(0..=nc.max(0)));
+                ui.label("x");
+                if ui.add(DragValue::new(&mut tg.x).speed(0.1)).changed() {
+                    self.dirty = true;
+                }
+                if let Some((d, b)) = annot::tangente_value(&self.curves, tg) {
+                    let signe = if b >= 0.0 { "+" } else { "-" };
+                    ui.small(format!("y = {d:.3}x {signe} {}", b.abs()));
+                }
+                if ui.small_button("✕").clicked() {
+                    del_tan = Some(i);
+                }
+            });
+        }
+        if let Some(i) = del_tan {
+            self.tangentes.remove(i);
+            self.dirty = true;
+        }
+
+        // --- intégrales ---
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(t.integrales).strong().small());
+            if !self.curves.is_empty() && ui.small_button(t.aj_integrale).clicked() {
+                self.integrales.push(IntegraleAnnot {
+                    curve: self.selected.unwrap_or(0),
+                    a: 0.0,
+                    b: 2.0,
+                });
+                self.dirty = true;
+            }
+        });
+        let mut del_int: Option<usize> = None;
+        for i in 0..self.integrales.len() {
+            let it = &mut self.integrales[i];
+            ui.horizontal(|ui| {
+                ui.label(t.courbe);
+                ui.add(DragValue::new(&mut it.curve).range(0..=nc.max(0)));
+                ui.label(t.a);
+                if ui.add(DragValue::new(&mut it.a).speed(0.1)).changed() {
+                    self.dirty = true;
+                }
+                ui.label("→");
+                if ui.add(DragValue::new(&mut it.b).speed(0.1)).changed() {
+                    self.dirty = true;
+                }
+                if let Some(v) = annot::integrale_value(&self.curves, it) {
+                    ui.small(format!("∫ ≈ {v:.4}"));
+                }
+                if ui.small_button("✕").clicked() {
+                    del_int = Some(i);
+                }
+            });
+        }
+        if let Some(i) = del_int {
+            self.integrales.remove(i);
+            self.dirty = true;
+        }
+    }
+
+    fn section_repere(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.strong(t.repere);
+        ui.horizontal(|ui| {
+            ui.label(t.origine);
             if ui
                 .add(DragValue::new(&mut self.page.cx).speed(0.1))
                 .changed()
@@ -374,7 +551,7 @@ impl SqApp {
             ui.label(")");
         });
         ui.horizontal(|ui| {
-            ui.label("Largeur :");
+            ui.label(t.largeur);
             if ui
                 .add(
                     DragValue::new(&mut self.page.width_mm)
@@ -386,7 +563,7 @@ impl SqApp {
             {
                 self.dirty = true;
             }
-            ui.label("Hauteur :");
+            ui.label(t.hauteur);
             if ui
                 .add(
                     DragValue::new(&mut self.page.height_mm)
@@ -400,7 +577,7 @@ impl SqApp {
             }
         });
         ui.horizontal(|ui| {
-            ui.label("Unité :");
+            ui.label(t.unite);
             if ui
                 .add(
                     DragValue::new(&mut self.page.unit_mm)
@@ -412,7 +589,7 @@ impl SqApp {
             {
                 self.dirty = true;
             }
-            ui.small("grille 5 × 5 mm");
+            ui.small(t.grille);
         });
         ui.horizontal(|ui| {
             if ui.checkbox(&mut self.page.log_x, "log X").changed() {
@@ -421,7 +598,7 @@ impl SqApp {
             if ui.checkbox(&mut self.page.log_y, "log Y").changed() {
                 self.dirty = true;
             }
-            if ui.button("Recentrer").clicked() {
+            if ui.button(t.recentrer).clicked() {
                 self.page.cx = 0.0;
                 self.page.cy = 0.0;
                 self.zoom = 1.0;
@@ -432,12 +609,13 @@ impl SqApp {
     }
 
     fn section_export(&mut self, ui: &mut Ui) {
-        ui.strong("Export");
+        let t = i18n::table(self.lang);
+        ui.strong(t.export);
         ui.horizontal(|ui| {
             if ui.button("SVG (sinequanon.svg)").clicked() {
                 let data = self.export_data();
                 let path = PathBuf::from("sinequanon.svg");
-                match render::write_svg_file(&self.page, &data, &path) {
+                match render::write_svg_file(&self.page, &data, &self.annots, &path) {
                     Ok(n) => self.set_status(format!("✔ {} écrit ({} octets)", path.display(), n)),
                     Err(e) => self.set_status(format!("✖ Échec SVG : {e}")),
                 }
@@ -447,12 +625,18 @@ impl SqApp {
             if ui.button("PNG (sinequanon.png)").clicked() {
                 let data = self.export_data();
                 let path = PathBuf::from("sinequanon.png");
-                match render::write_png_file(&self.page, &data, self.px_per_mm as f64, &path) {
+                match render::write_png_file(
+                    &self.page,
+                    &data,
+                    &self.annots,
+                    self.px_per_mm as f64,
+                    &path,
+                ) {
                     Ok(()) => self.set_status(format!("✔ {} écrit", path.display())),
                     Err(e) => self.set_status(format!("✖ Échec PNG : {e}")),
                 }
             }
-            ui.label("Résolution :");
+            ui.label(t.resolution);
             ui.add(
                 DragValue::new(&mut self.px_per_mm)
                     .suffix(" px/mm")
@@ -527,6 +711,7 @@ impl SqApp {
         self.dessine_grille(&painter, page_rect, ppm);
         self.dessine_axes(&painter, page_rect, ppm);
         self.dessine_courbes(&painter, page_rect, ppm);
+        self.dessine_annots(&painter, page_rect, ppm);
 
         // lecture des coordonnées sous le curseur
         if let Some(pos) = hover {
@@ -743,6 +928,114 @@ impl SqApp {
         }
     }
 
+    /// Dessine les annotations : aires hachurées (remplissage translucide +
+    /// trame diagonale 45°), tangentes (segment + point de tangence) et
+    /// points (marqueur + coordonnées).
+    fn dessine_annots(&self, painter: &egui::Painter, page_rect: Rect, ppm: f32) {
+        let to_px = |mm: (f64, f64)| {
+            Pos2::new(
+                page_rect.min.x + mm.0 as f32 * ppm,
+                page_rect.min.y + mm.1 as f32 * ppm,
+            )
+        };
+
+        // aires hachurées
+        for a in &self.annots {
+            if let AnnotDraw::Integrale {
+                path,
+                label,
+                label_mm,
+                color,
+                ..
+            } = a
+            {
+                let col = Color32::from_rgba_unmultiplied(color[0], color[1], color[2], 42);
+                // remplissage : ruban vertical (quad par échantillon consécutif)
+                if path.len() >= 3 {
+                    let axis_y = path[0].1;
+                    let samples = &path[1..path.len() - 1];
+                    let mut mesh = egui::Mesh::default();
+                    for &(mx, my) in samples {
+                        mesh.colored_vertex(to_px((mx, axis_y)), col);
+                        mesh.colored_vertex(to_px((mx, my)), col);
+                    }
+                    let n = samples.len();
+                    for i in 0..n - 1 {
+                        let (a0, b0) = (2 * i, 2 * i + 1);
+                        let (a1, b1) = (2 * i + 2, 2 * i + 3);
+                        mesh.add_triangle(a0 as u32, b0 as u32, b1 as u32);
+                        mesh.add_triangle(a0 as u32, b1 as u32, a1 as u32);
+                    }
+                    painter.add(egui::Shape::Mesh(mesh));
+                }
+                // trame diagonale (45°), même pas qu'en export (1,8 mm)
+                let hatch_col = Color32::from_rgba_unmultiplied(color[0], color[1], color[2], 170);
+                for ((x0, y0), (x1, y1)) in annot::hatch_segments(path, 1.8) {
+                    painter.line_segment(
+                        [to_px((x0, y0)), to_px((x1, y1))],
+                        Stroke::new(1.0_f32, hatch_col),
+                    );
+                }
+                // valeur de l'aire
+                painter.text(
+                    to_px(*label_mm) - Vec2::new(0.0, 5.0),
+                    Align2::CENTER_BOTTOM,
+                    format!("∫ ≈ {label}"),
+                    FontId::proportional(11.0),
+                    Color32::from_rgb(color[0], color[1], color[2]),
+                );
+            }
+        }
+
+        // tangentes puis points
+        for a in &self.annots {
+            match a {
+                AnnotDraw::Tangente {
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    mm,
+                    label,
+                    color,
+                    ..
+                } => {
+                    let col = Color32::from_rgb(color[0], color[1], color[2]);
+                    painter.line_segment(
+                        [to_px((*x0, *y0)), to_px((*x1, *y1))],
+                        Stroke::new(1.5_f32, col),
+                    );
+                    let c = to_px(*mm);
+                    painter.circle_filled(c, 5.0, Color32::WHITE);
+                    painter.circle_stroke(c, 5.0, Stroke::new(2.0_f32, col));
+                    painter.text(
+                        c + Vec2::new(8.0, -6.0),
+                        Align2::LEFT_BOTTOM,
+                        label.as_str(),
+                        FontId::proportional(11.0),
+                        col,
+                    );
+                }
+                AnnotDraw::Point {
+                    mm, label, color, ..
+                } => {
+                    let col = Color32::from_rgb(color[0], color[1], color[2]);
+                    let c = to_px(*mm);
+                    painter.circle_filled(c, 5.0, Color32::WHITE);
+                    painter.circle_stroke(c, 5.0, Stroke::new(2.0_f32, col));
+                    painter.text(
+                        c + Vec2::new(8.0, -6.0),
+                        Align2::LEFT_BOTTOM,
+                        label.as_str(),
+                        FontId::proportional(11.0),
+                        col,
+                    );
+                }
+                AnnotDraw::Integrale { .. } => {}
+            }
+        }
+    }
+
     fn dessine_courbes(&self, painter: &egui::Painter, page_rect: Rect, ppm: f32) {
         for (i, curve) in self.curves.iter().enumerate() {
             if !curve.visible {
@@ -806,6 +1099,10 @@ impl eframe::App for SqApp {
                 version: 1,
                 page: self.page,
                 curves: self.curves.clone(),
+                lang: self.lang,
+                points: self.points.clone(),
+                tangentes: self.tangentes.clone(),
+                integrales: self.integrales.clone(),
             };
             if session::save(&s).is_ok() {
                 self.dirty = false;

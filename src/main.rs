@@ -5,17 +5,21 @@
 
 #![forbid(unsafe_code)]
 
+mod annot;
 mod app;
 mod curve;
 mod expr;
 mod grid;
+mod i18n;
 mod png;
 mod render;
 mod session;
 
+use annot::{IntegraleAnnot, PointAnnot, TangenteAnnot};
 use curve::{apply_style, Curve, CurveKind, PALETTE};
 use eframe::egui;
 use grid::Page;
+use i18n::Lang;
 use std::path::PathBuf;
 
 const AIDE: &str = "\
@@ -32,6 +36,9 @@ OPTIONS D'EXPORT
   -p, --polaire EXPR          Ajoute r(θ) = EXPR (répétable)
   -c, --param X;Y             Ajoute x = X(t), y = Y(t) (répétable)
       --t-min N --t-max N     Domaine de t/θ (défaut : -2π .. 2π)
+      --point C:x             Point sur la courbe C à l'abscisse x
+      --tangente C:x          Tangente à la courbe C en x (fonctions)
+      --aire C:a:b            Intégrale hachurée de C entre a et b
       --svg FICHIER           Sortie SVG (défaut : sinequanon.svg)
       --png FICHIER           Sortie PNG
       --px-par-mm N           Résolution du PNG (défaut : 4)
@@ -42,16 +49,20 @@ OPTIONS D'EXPORT
       --unite-mm N            Longueur d'une unité en mm (défaut : 20)
       --log-x --log-y         Échelles logarithmiques
 
+OPTIONS GÉNÉRALES
+      --lang fr|en            Langue de l'interface (défaut : fr)
+
 EXEMPLES
   sinequanon export -f \"sin(x)\" -f \"x^2/4-2\" --svg courbe.svg
   sinequanon export -p \"2+cos(theta)\" --png courbe.png
   sinequanon export -c \"cos(t);sin(t)/2\" --t-min -6.28 --t-max 6.28
+  sinequanon export -f \"x^2\" --aire 0:1:2 --tangente 0:2 --point 0:1
 ";
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        None => gui().map_err(|e| e.to_string()),
+        None => gui(lang_de(&args)).map_err(|e| e.to_string()),
         Some("--version" | "-V") => {
             println!("sinequanon {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -61,13 +72,31 @@ fn main() -> Result<(), String> {
             Ok(())
         }
         Some("export") => exporter(&args[1..]),
+        Some("--lang") => gui(lang_de(&args)).map_err(|e| e.to_string()),
         Some(other) => Err(format!(
             "commande inconnue « {other} ». Sans argument, l'interface graphique s'ouvre ; voir --aide."
         )),
     }
 }
 
-fn gui() -> eframe::Result<()> {
+/// Langue demandée par `--lang fr|en` (None sinon).
+fn lang_de(args: &[String]) -> Option<Lang> {
+    for (i, a) in args.iter().enumerate() {
+        if a == "--lang" {
+            return match args.get(i + 1).map(String::as_str) {
+                Some("fr") => Some(Lang::Fr),
+                Some("en") => Some(Lang::En),
+                _ => {
+                    eprintln!("avertissement : --lang attend fr ou en");
+                    None
+                }
+            };
+        }
+    }
+    None
+}
+
+fn gui(lang: Option<Lang>) -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1150.0, 780.0])
@@ -77,7 +106,7 @@ fn gui() -> eframe::Result<()> {
     eframe::run_native(
         "Sine qua non",
         options,
-        Box::new(|_cc| Ok(Box::new(app::SqApp::new()) as Box<dyn eframe::App>)),
+        Box::new(|_cc| Ok(Box::new(app::SqApp::new(lang)) as Box<dyn eframe::App>)),
     )
 }
 
@@ -87,6 +116,9 @@ struct Opts {
     params: Vec<(String, String)>,
     tmin: f64,
     tmax: f64,
+    points: Vec<(usize, f64)>,
+    tangentes: Vec<(usize, f64)>,
+    aires: Vec<(usize, f64, f64)>,
     svg: Option<String>,
     png: Option<String>,
     px_par_mm: f64,
@@ -101,12 +133,43 @@ impl Default for Opts {
             params: Vec::new(),
             tmin: -2.0 * std::f64::consts::PI,
             tmax: 2.0 * std::f64::consts::PI,
+            points: Vec::new(),
+            tangentes: Vec::new(),
+            aires: Vec::new(),
             svg: None,
             png: None,
             px_par_mm: 4.0,
             page: Page::default(),
         }
     }
+}
+
+/// Analyse « C:x » (courbe, abscisse) utilisé par --point/--tangente.
+fn courbe_x(v: &str, option: &str) -> Result<(usize, f64), String> {
+    let (c, x) = v
+        .split_once(':')
+        .ok_or_else(|| format!("{option} attend « C:x », reçu « {v} »"))?;
+    let c = c
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| format!("{option} : « {c} » n'est pas un indice de courbe"))?;
+    let x = nb(x.trim(), option)?;
+    Ok((c, x))
+}
+
+/// Analyse « C:a:b » utilisé par --aire.
+fn courbe_ab(v: &str, option: &str) -> Result<(usize, f64, f64), String> {
+    let (c, reste) = v
+        .split_once(':')
+        .ok_or_else(|| format!("{option} attend « C:a:b », reçu « {v} »"))?;
+    let (a, b) = reste
+        .split_once(':')
+        .ok_or_else(|| format!("{option} attend « C:a:b », reçu « {v} »"))?;
+    let c = c
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| format!("{option} : « {c} » n'est pas un indice de courbe"))?;
+    Ok((c, nb(a.trim(), option)?, nb(b.trim(), option)?))
 }
 
 fn valeur(args: &[String], i: &mut usize, option: &str) -> Result<String, String> {
@@ -138,6 +201,13 @@ fn exporter(args: &[String]) -> Result<(), String> {
             }
             "--t-min" => o.tmin = nb(&valeur(args, &mut i, a)?, a)?,
             "--t-max" => o.tmax = nb(&valeur(args, &mut i, a)?, a)?,
+            "--point" => o.points.push(courbe_x(&valeur(args, &mut i, a)?, a)?),
+            "--tangente" => o.tangentes.push(courbe_x(&valeur(args, &mut i, a)?, a)?),
+            "--aire" => o.aires.push(courbe_ab(&valeur(args, &mut i, a)?, a)?),
+            "--lang" => {
+                // toléré sur la ligne export (sans effet sur la sortie)
+                valeur(args, &mut i, a)?;
+            }
             "--svg" => o.svg = Some(valeur(args, &mut i, a)?),
             "--png" => o.png = Some(valeur(args, &mut i, a)?),
             "--px-par-mm" => o.px_par_mm = nb(&valeur(args, &mut i, a)?, a)?,
@@ -194,17 +264,34 @@ fn exporter(args: &[String]) -> Result<(), String> {
         data.push((c.clone(), apply_style(polys, c.style)));
     }
 
+    let points = o
+        .points
+        .iter()
+        .map(|&(curve, x)| PointAnnot { curve, x })
+        .collect::<Vec<_>>();
+    let tangentes = o
+        .tangentes
+        .iter()
+        .map(|&(curve, x)| TangenteAnnot { curve, x })
+        .collect::<Vec<_>>();
+    let integrales = o
+        .aires
+        .iter()
+        .map(|&(curve, a, b)| IntegraleAnnot { curve, a, b })
+        .collect::<Vec<_>>();
+    let annots = annot::draw_list(&o.page, &curves, &points, &tangentes, &integrales);
+
     if let Some(svg) = &o.svg {
-        let n = render::write_svg_file(&o.page, &data, &PathBuf::from(svg))
+        let n = render::write_svg_file(&o.page, &data, &annots, &PathBuf::from(svg))
             .map_err(|e| format!("écriture de {svg} : {e}"))?;
         println!("✔ {svg} écrit ({} octets)", n);
     } else if o.png.is_none() {
-        let n = render::write_svg_file(&o.page, &data, &PathBuf::from("sinequanon.svg"))
+        let n = render::write_svg_file(&o.page, &data, &annots, &PathBuf::from("sinequanon.svg"))
             .map_err(|e| format!("écriture de sinequanon.svg : {e}"))?;
         println!("✔ sinequanon.svg écrit ({} octets)", n);
     }
     if let Some(png) = &o.png {
-        render::write_png_file(&o.page, &data, o.px_par_mm, &PathBuf::from(png))
+        render::write_png_file(&o.page, &data, &annots, o.px_par_mm, &PathBuf::from(png))
             .map_err(|e| format!("écriture de {png} : {e}"))?;
         println!("✔ {png} écrit");
     }

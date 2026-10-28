@@ -1,8 +1,10 @@
 //! Sauvegarde et rechargement de la session (JSON) pour l'interface
 //! graphique.
 
+use crate::annot::{IntegraleAnnot, PointAnnot, TangenteAnnot};
 use crate::curve::Curve;
 use crate::grid::Page;
+use crate::i18n::Lang;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -11,6 +13,16 @@ pub struct Session {
     pub version: u32,
     pub page: Page,
     pub curves: Vec<Curve>,
+    /// langue de l'interface (v0.2+ ; défaut : français)
+    #[serde(default)]
+    pub lang: Lang,
+    /// annotations persistées (v0.2+)
+    #[serde(default)]
+    pub points: Vec<PointAnnot>,
+    #[serde(default)]
+    pub tangentes: Vec<TangenteAnnot>,
+    #[serde(default)]
+    pub integrales: Vec<IntegraleAnnot>,
 }
 
 /// Chemin du fichier de session selon la plateforme.
@@ -57,9 +69,28 @@ mod tests {
             version: 1,
             page: Page::default(),
             curves: vec![Curve::fonction("sin(x)", [0, 0, 204])],
+            lang: Lang::Fr,
+            points: vec![crate::annot::PointAnnot { curve: 0, x: 1.0 }],
+            tangentes: vec![],
+            integrales: vec![crate::annot::IntegraleAnnot {
+                curve: 0,
+                a: 0.0,
+                b: 2.0,
+            }],
         };
         let txt = serde_json::to_string(&s).unwrap();
         let back: Session = serde_json::from_str(&txt).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn ancienne_session_sans_langue_ni_annotations() {
+        // une session v0.1 (sans lang/points/…) doit se charger telle quelle
+        let txt = r#"{"version":1,"page":{"width_mm":170.0,"height_mm":120.0,
+            "cx":0.0,"cy":0.0,"unit_mm":20.0,"log_x":false,"log_y":false},
+            "curves":[]}"#;
+        let s: Session = serde_json::from_str(txt).unwrap();
+        assert_eq!(s.lang, Lang::Fr);
+        assert!(s.points.is_empty() && s.tangentes.is_empty() && s.integrales.is_empty());
     }
 }

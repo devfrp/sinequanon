@@ -1,5 +1,6 @@
 //! Rendus d'export : SVG vectoriel (mm, imprimable 1:1) et PNG raster.
 
+use crate::annot::AnnotDraw;
 use crate::curve::Curve;
 use crate::grid::{Page, PAS_MM};
 use crate::png::Raster;
@@ -48,8 +49,16 @@ fn svg_line(s: &mut String, x0: f64, y0: f64, x1: f64, y1: f64, stroke: &str, wi
     ));
 }
 
+fn svg_text(s: &mut String, x: f64, y: f64, txt: &str, color: &str, anchor: &str) {
+    s.push_str(&format!(
+        "<text x=\"{}\" y=\"{}\" font-size=\"3\" font-family=\"DejaVu Sans, sans-serif\" fill=\"{color}\" text-anchor=\"{anchor}\">{txt}</text>\n",
+        f(x),
+        f(y)
+    ));
+}
+
 /// Construit le SVG complet de la page.
-pub fn svg(page: &Page, curves: &[CurvePolys]) -> String {
+pub fn svg(page: &Page, curves: &[CurvePolys], annots: &[AnnotDraw]) -> String {
     let p = page;
     let mut s = String::with_capacity(64 * 1024);
     s.push_str(&format!(
@@ -57,10 +66,26 @@ pub fn svg(page: &Page, curves: &[CurvePolys]) -> String {
          <svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{:.2}mm\" height=\"{:.2}mm\" viewBox=\"0 0 {:.2} {:.2}\">\n",
         p.width_mm, p.height_mm, p.width_mm, p.height_mm
     ));
+    // defs : clip de page + une trame de hachures par couleur d'aire
+    s.push_str("<defs>");
     s.push_str(&format!(
-        "<defs><clipPath id=\"page\"><rect x=\"0\" y=\"0\" width=\"{:.2}\" height=\"{:.2}\"/></clipPath></defs>\n",
+        "<clipPath id=\"page\"><rect x=\"0\" y=\"0\" width=\"{:.2}\" height=\"{:.2}\"/></clipPath>",
         p.width_mm, p.height_mm
     ));
+    let mut hatch_colors: Vec<[u8; 3]> = Vec::new();
+    for a in annots {
+        if let AnnotDraw::Integrale { color, .. } = a {
+            if !hatch_colors.contains(color) {
+                hatch_colors.push(*color);
+                s.push_str(&format!(
+                    "<pattern id=\"hatch-{:02x}{:02x}{:02x}\" width=\"1.8\" height=\"1.8\" patternUnits=\"userSpaceOnUse\" patternTransform=\"rotate(45)\"><line x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1.8\" stroke=\"{}\" stroke-width=\"0.4\"/></pattern>",
+                    color[0], color[1], color[2],
+                    hex(*color)
+                ));
+            }
+        }
+    }
+    s.push_str("</defs>\n");
     s.push_str(&format!(
         "<rect x=\"0\" y=\"0\" width=\"{:.2}\" height=\"{:.2}\" fill=\"#ffffff\"/>\n",
         p.width_mm, p.height_mm
@@ -227,13 +252,85 @@ pub fn svg(page: &Page, curves: &[CurvePolys]) -> String {
             ));
         }
     }
+    // annotations : aires hachurées d'abord (sous les labels), puis
+    // tangentes et points par-dessus
+    for a in annots {
+        if let AnnotDraw::Integrale {
+            path,
+            label,
+            label_mm,
+            color,
+            ..
+        } = a
+        {
+            let stroke = hex(*color);
+            let mut d = String::with_capacity(path.len() * 16);
+            for (i, (x, y)) in path.iter().enumerate() {
+                d.push_str(if i == 0 { "M" } else { "L" });
+                d.push_str(&format!("{} {} ", f(*x), f(*y)));
+            }
+            d.push('Z');
+            s.push_str(&format!(
+                "<path d=\"{d}\" fill=\"url(#hatch-{:02x}{:02x}{:02x})\" stroke=\"{stroke}\" stroke-width=\"0.4\"/>\n",
+                color[0], color[1], color[2]
+            ));
+            svg_text(
+                &mut s,
+                label_mm.0,
+                label_mm.1 - 1.2,
+                &format!("∫ ≈ {label}"),
+                &stroke,
+                "middle",
+            );
+        }
+    }
+    for a in annots {
+        match a {
+            AnnotDraw::Point {
+                mm, label, color, ..
+            } => {
+                let stroke = hex(*color);
+                s.push_str(&format!(
+                    "<circle cx=\"{}\" cy=\"{}\" r=\"0.9\" fill=\"#ffffff\" stroke=\"{stroke}\" stroke-width=\"0.5\"/>\n",
+                    f(mm.0),
+                    f(mm.1)
+                ));
+                svg_text(&mut s, mm.0 + 1.4, mm.1 - 1.4, label, &stroke, "start");
+            }
+            AnnotDraw::Tangente {
+                x0,
+                y0,
+                x1,
+                y1,
+                mm,
+                label,
+                color,
+                ..
+            } => {
+                let stroke = hex(*color);
+                svg_line(&mut s, *x0, *y0, *x1, *y1, &stroke, 0.5);
+                s.push_str(&format!(
+                    "<circle cx=\"{}\" cy=\"{}\" r=\"0.9\" fill=\"#ffffff\" stroke=\"{stroke}\" stroke-width=\"0.5\"/>\n",
+                    f(mm.0),
+                    f(mm.1)
+                ));
+                svg_text(&mut s, mm.0 + 1.4, mm.1 - 1.4, label, &stroke, "start");
+            }
+            AnnotDraw::Integrale { .. } => {}
+        }
+    }
     s.push_str("</g>\n</svg>\n");
     s
 }
 
 /// Écrit la page en SVG. Renvoie la taille du fichier.
-pub fn write_svg_file(page: &Page, curves: &[CurvePolys], path: &Path) -> std::io::Result<usize> {
-    let s = svg(page, curves);
+pub fn write_svg_file(
+    page: &Page,
+    curves: &[CurvePolys],
+    annots: &[AnnotDraw],
+    path: &Path,
+) -> std::io::Result<usize> {
+    let s = svg(page, curves, annots);
     std::fs::write(path, s.as_bytes())?;
     Ok(s.len())
 }
@@ -294,10 +391,133 @@ fn draw_page_raster(r: &mut Raster, p: &Page, ppm: f64) {
     }
 }
 
+/// Point dans un polygone (test pair-impair, coordonnées quelconques).
+fn point_in_poly(path: &[(f64, f64)], x: f64, y: f64) -> bool {
+    let mut inside = false;
+    let mut j = path.len() - 1;
+    for (i, &(xi, yi)) in path.iter().enumerate() {
+        let (xj, yj) = path[j];
+        if (yi > y) != (yj > y) {
+            let x_int = (xj - xi) * (y - yi) / (yj - yi) + xi;
+            if x < x_int {
+                inside = !inside;
+            }
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Disque rempli (marqueur de point/tangence).
+fn raster_disc(r: &mut Raster, cx: f64, cy: f64, radius: f64, c: [u8; 4]) {
+    let r2 = radius * radius;
+    for py in ((cy - radius).floor() as i64)..=((cy + radius).ceil() as i64) {
+        for px in ((cx - radius).floor() as i64)..=((cx + radius).ceil() as i64) {
+            let dx = px as f64 + 0.5 - cx;
+            let dy = py as f64 + 0.5 - cy;
+            if dx * dx + dy * dy <= r2 {
+                r.set(px, py, c);
+            }
+        }
+    }
+}
+
+/// Dessine les annotations dans un raster. Les libellés texte ne sont
+/// restitués qu'en SVG (pas de police dans le raster) ; marqueurs et
+/// hachures y sont fidèles.
+fn draw_annots_raster(r: &mut Raster, annots: &[AnnotDraw], ppm: f64) {
+    // aires hachurées d'abord
+    for a in annots {
+        if let AnnotDraw::Integrale { path, color, .. } = a {
+            let c4 = [color[0], color[1], color[2], 255];
+            // trame diagonale : période 1,8 mm, trait 0,35 mm (comme le SVG)
+            let period = (1.8 * ppm).max(3.0);
+            let width = (0.35 * ppm).max(1.0);
+            let mut minx = f64::MAX;
+            let mut maxx = f64::MIN;
+            let mut miny = f64::MAX;
+            let mut maxy = f64::MIN;
+            for &(x, y) in path {
+                minx = minx.min(x);
+                maxx = maxx.max(x);
+                miny = miny.min(y);
+                maxy = maxy.max(y);
+            }
+            // balayage en pixels, test d'intérieur en millimètres
+            for py in (miny * ppm).floor() as i64..=((maxy * ppm).ceil() as i64) {
+                for px in (minx * ppm).floor() as i64..=((maxx * ppm).ceil() as i64) {
+                    if !point_in_poly(path, px as f64 / ppm, py as f64 / ppm) {
+                        continue;
+                    }
+                    if ((px + py) as f64).rem_euclid(period) < width {
+                        r.set(px, py, c4);
+                    }
+                }
+            }
+            for seg in path.windows(2) {
+                r.line(
+                    seg[0].0 * ppm,
+                    seg[0].1 * ppm,
+                    seg[1].0 * ppm,
+                    seg[1].1 * ppm,
+                    c4,
+                    1.0,
+                );
+            }
+        }
+    }
+    // tangentes puis points
+    for a in annots {
+        match a {
+            AnnotDraw::Tangente {
+                x0,
+                y0,
+                x1,
+                y1,
+                mm,
+                color,
+                ..
+            } => {
+                let c4 = [color[0], color[1], color[2], 255];
+                r.line(
+                    x0 * ppm,
+                    y0 * ppm,
+                    x1 * ppm,
+                    y1 * ppm,
+                    c4,
+                    (0.5 * ppm).clamp(1.0, 3.0),
+                );
+                let rad = (0.9 * ppm).max(2.0);
+                raster_disc(r, mm.0 * ppm, mm.1 * ppm, rad, [255, 255, 255, 255]);
+                raster_disc(
+                    r,
+                    mm.0 * ppm,
+                    mm.1 * ppm,
+                    rad * 0.55,
+                    [color[0], color[1], color[2], 255],
+                );
+            }
+            AnnotDraw::Point { mm, color, .. } => {
+                let rad = (0.9 * ppm).max(2.0);
+                raster_disc(r, mm.0 * ppm, mm.1 * ppm, rad, [255, 255, 255, 255]);
+                raster_disc(
+                    r,
+                    mm.0 * ppm,
+                    mm.1 * ppm,
+                    rad * 0.55,
+                    [color[0], color[1], color[2], 255],
+                );
+            }
+            AnnotDraw::Integrale { .. } => {}
+        }
+    }
+}
+
 /// Écrit la page en PNG à `px_per_mm` pixels par millimètre.
 pub fn write_png_file(
     page: &Page,
     curves: &[CurvePolys],
+    annots: &[AnnotDraw],
     px_per_mm: f64,
     path: &Path,
 ) -> std::io::Result<()> {
@@ -325,12 +545,14 @@ pub fn write_png_file(
             }
         }
     }
+    draw_annots_raster(&mut r, annots, ppm);
     r.write_png(path)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::annot::{draw_list, IntegraleAnnot, PointAnnot, TangenteAnnot};
     use crate::curve::{sample_curve, Curve, CurveKind};
 
     #[test]
@@ -338,7 +560,7 @@ mod tests {
         let p = Page::default();
         let c = Curve::fonction("sin(x)", [0, 0, 204]);
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c, polys)]);
+        let s = svg(&p, &[(c, polys)], &[]);
         assert!(s.contains("viewBox=\"0 0 170.00 120.00\""), "{s}");
         assert!(s.contains("clipPath"));
         assert!(s.contains("#0000cc"));
@@ -354,11 +576,52 @@ mod tests {
         };
         let c = Curve::fonction("log(x)", [204, 0, 0]);
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c, polys)]);
+        let s = svg(&p, &[(c, polys)], &[]);
         assert!(
             s.contains("10³") || s.contains("10²") || s.contains("10¹"),
             "{s}"
         );
+    }
+
+    #[test]
+    fn svg_integrale_hachures_et_valeur() {
+        let p = Page::default();
+        let c = Curve::fonction("x^2", [0, 0, 204]);
+        let polys = sample_curve(&c, &p, 200, 200).unwrap();
+        let annots = draw_list(
+            &p,
+            std::slice::from_ref(&c),
+            &[],
+            &[],
+            &[IntegraleAnnot {
+                curve: 0,
+                a: 0.0,
+                b: 2.0,
+            }],
+        );
+        let s = svg(&p, &[(c, polys)], &annots);
+        assert!(s.contains("<pattern"), "trame manquante : {s}");
+        assert!(s.contains("url(#hatch-0000cc)"), "{s}");
+        assert!(s.contains("rotate(45)"), "{s}");
+        assert!(s.contains("∫ ≈ 2.6667"), "{s}");
+    }
+
+    #[test]
+    fn svg_point_et_tangente() {
+        let p = Page::default();
+        let c = Curve::fonction("x^2", [0, 0, 204]);
+        let polys = sample_curve(&c, &p, 200, 200).unwrap();
+        let annots = draw_list(
+            &p,
+            std::slice::from_ref(&c),
+            &[PointAnnot { curve: 0, x: 1.0 }],
+            &[TangenteAnnot { curve: 0, x: 2.0 }],
+            &[],
+        );
+        let s = svg(&p, &[(c, polys)], &annots);
+        assert!(s.matches("<circle").count() == 2, "{s}");
+        assert!(s.contains("(1.000 ; 1.000)"), "{s}");
+        assert!(s.contains("y = 4.000x"), "{s}");
     }
 
     #[test]
@@ -369,7 +632,36 @@ mod tests {
         let dir = std::env::temp_dir().join("sqn-test-svg");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.png");
-        write_png_file(&p, &[(c, polys)], 2.0, &path).unwrap();
+        write_png_file(&p, &[(c, polys)], &[], 2.0, &path).unwrap();
+        let data = std::fs::read(&path).unwrap();
+        assert_eq!(
+            &data[..8],
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn png_avec_annots_ecrit_un_fichier_valide() {
+        let p = Page::default();
+        let c = Curve::fonction("x^2", [0, 0, 204]);
+        let polys = sample_curve(&c, &p, 200, 200).unwrap();
+        let annots = draw_list(
+            &p,
+            std::slice::from_ref(&c),
+            &[PointAnnot { curve: 0, x: 1.0 }],
+            &[TangenteAnnot { curve: 0, x: 1.5 }],
+            &[IntegraleAnnot {
+                curve: 0,
+                a: 0.0,
+                b: 2.0,
+            }],
+        );
+        assert_eq!(annots.len(), 3);
+        let dir = std::env::temp_dir().join("sqn-test-svg");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test-annots.png");
+        write_png_file(&p, &[(c, polys)], &annots, 2.0, &path).unwrap();
         let data = std::fs::read(&path).unwrap();
         assert_eq!(
             &data[..8],
@@ -384,10 +676,18 @@ mod tests {
         let mut c = Curve::fonction("sin(x)", [0, 0, 204]);
         c.visible = false;
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c.clone(), polys)]);
+        let s = svg(&p, &[(c.clone(), polys)], &[]);
         assert!(!s.contains("#0000cc"));
         let _ = CurveKind::Fonction {
             expr: String::new(),
         }; // silence clippy
+    }
+
+    #[test]
+    fn point_dans_polygone() {
+        let tri = vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        assert!(point_in_poly(&tri, 5.0, 5.0));
+        assert!(!point_in_poly(&tri, 15.0, 5.0));
+        assert!(!point_in_poly(&tri, -1.0, -1.0));
     }
 }
