@@ -1,0 +1,161 @@
+# Compilation et publication de Sine qua non (Rust).
+#
+# - push sur main           : tests seuls (économies de minutes sur dépôt privé)
+# - tag v* / déclenchement  : tests + builds Windows (.exe), macOS (universel),
+#                             Linux (musl statique et gnu), puis publication
+#                             d'une release avec sommes SHA-256
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --quiet
+
+  build:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux statique (musl) : fonctionne sur toute distribution
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: sinequanon-linux-x86_64-musl.tar.gz
+          # Linux glibc (secours)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: sinequanon-linux-x86_64-gnu.tar.gz
+          # Linux ARM statique, via cross (non bloquant)
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            cross: true
+            artifact: sinequanon-linux-aarch64-musl.tar.gz
+          # Windows : .exe MSVC
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: sinequanon-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.cross == true }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build (cross)
+        if: matrix.cross == true
+        run: |
+          cargo install cross --locked
+          cross build --release --target ${{ matrix.target }}
+      - name: Build (natif)
+        if: matrix.cross != true
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Packager
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          EXT=""
+          case "${{ matrix.target }}" in *windows*) EXT=".exe" ;; esac
+          SRC="target/${{ matrix.target }}/release/sinequanon${EXT}"
+          cp "$SRC" "dist/sinequanon${EXT}"
+          case "${{ matrix.artifact }}" in
+            *.tar.gz)
+              tar -czf "dist/${{ matrix.artifact }}" -C dist "sinequanon${EXT}"
+              rm "dist/sinequanon${EXT}"
+              ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-double-cible
+      - name: Build arm64 + x86_64
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+      - name: Binaire universel (lipo)
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          lipo -create \
+            target/aarch64-apple-darwin/release/sinequanon \
+            target/x86_64-apple-darwin/release/sinequanon \
+            -output dist/sinequanon
+          file dist/sinequanon
+          tar -czf dist/sinequanon-macos-universal.tar.gz -C dist sinequanon
+          rm dist/sinequanon
+          cp target/aarch64-apple-darwin/release/sinequanon dist/sinequanon
+          tar -czf dist/sinequanon-macos-aarch64.tar.gz -C dist sinequanon
+          rm dist/sinequanon
+          cp target/x86_64-apple-darwin/release/sinequanon dist/sinequanon
+          tar -czf dist/sinequanon-macos-x86_64.tar.gz -C dist sinequanon
+          rm dist/sinequanon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sinequanon-macos
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [build, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*"
+          merge-multiple: true
+          path: dist
+      - name: Sommes de contrôle
+        working-directory: dist
+        run: |
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publier la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Sine qua non ${GITHUB_REF_NAME}" \
+            --generate-notes
