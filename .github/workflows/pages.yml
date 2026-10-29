@@ -1,0 +1,56 @@
+# Publication du site (GitHub Pages).
+#
+# Les figures du site ne sont pas versionnées : elles sont régénérées à chaque
+# publication par site/plots.sh avec le binaire Linux musl de la dernière
+# release (somme SHA-256 vérifiée), donc toujours la sortie réelle du programme.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Télécharger le binaire de la dernière release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/sqn" && cd "$RUNNER_TEMP/sqn"
+          gh release download --repo "$GITHUB_REPOSITORY" \
+            --pattern 'sinequanon-linux-x86_64-musl.tar.gz' --pattern SHA256SUMS
+          sha256sum -c --ignore-missing SHA256SUMS
+          tar -xzf sinequanon-linux-x86_64-musl.tar.gz
+      - name: Générer les figures
+        run: SQN="$RUNNER_TEMP/sqn/sinequanon" site/plots.sh
+      - name: Retirer les fichiers de travail
+        run: rm -rf site/.hallmark site/plots.sh
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
