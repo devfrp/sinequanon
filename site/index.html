@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sine qua non en Rust</title>
+<meta name="description" content="Traceur de courbes pour l'enseignement des mathématiques, réécrit de zéro en Rust. Fonctions, courbes paramétrées et polaires, export SVG et PNG.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body>
+<a class="skip" href="#main">Aller au contenu</a>
+
+<header class="nav">
+  <div class="container nav__bar">
+    <a class="wordmark" href="./">Sine qua non <span>Rust</span></a>
+    <div class="cmd" role="group" aria-label="Installer sous Linux">
+      <code class="cmd__text" title="curl -fsSL https://raw.githubusercontent.com/devfrp/sinequanon/main/install.sh | bash">curl -fsSL …/install.sh | bash</code>
+      <button class="cmd__copy" type="button" data-copy="curl -fsSL https://raw.githubusercontent.com/devfrp/sinequanon/main/install.sh | bash">Copier</button>
+      <span class="visually-hidden" role="status" data-copy-status></span>
+    </div>
+    <nav class="nav__links" aria-label="Sections">
+      <a href="#courbes">Courbes</a>
+      <a href="#feuille-de-route">Feuille de route</a>
+      <a href="https://github.com/devfrp/sinequanon">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero">
+  <div class="container hero__grid">
+    <div class="hero__text">
+      <h1>Le traceur de courbes, réécrit en Rust.</h1>
+      <p class="lead">Fonctions, courbes paramétrées et polaires sur papier millimétré, exportées en SVG.</p>
+      <div class="actions">
+        <a class="btn btn--primary" href="https://github.com/devfrp/sinequanon/releases/latest">Télécharger la v0.2.0</a>
+        <a class="btn" href="https://github.com/devfrp/sinequanon">Voir le code</a>
+      </div>
+    </div>
+    <figure class="sheet sheet--hero" data-kind="product">
+      <div class="sheet__head"><span>annotations.svg</span><span>170 × 120 mm</span></div>
+      <img src="plots/annotations.svg" width="680" height="480" alt="Sinus et parabole sur la grille de 5 mm : aire hachurée de 0 à π, valeur 2,0000 ; tangente y = 1,000x − 3,000 en x = 2 ; point (−2 ; −1)." fetchpriority="high">
+      <figcaption><code>sinequanon export -f "sin(x)" -f "x^2/4-2" --aire 0:0:3.14159 --tangente 1:2 --point 1:-2</code></figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section" id="courbes" aria-labelledby="courbes-h">
+  <div class="container">
+    <div class="split-head">
+      <h2 id="courbes-h">Quatre manières de tracer.</h2>
+      <div class="seg" role="tablist" aria-label="Type de courbe" data-tabs>
+        <button role="tab" id="t-f" aria-controls="p-f" aria-selected="true">Fonction</button>
+        <button role="tab" id="t-c" aria-controls="p-c" aria-selected="false" tabindex="-1">Paramétrée</button>
+        <button role="tab" id="t-p" aria-controls="p-p" aria-selected="false" tabindex="-1">Polaire</button>
+        <button role="tab" id="t-l" aria-controls="p-l" aria-selected="false" tabindex="-1">Logarithmique</button>
+      </div>
+    </div>
+
+    <div class="panel" role="tabpanel" id="p-f" aria-labelledby="t-f">
+      <p class="panel__text">y = f(x), avec la multiplication implicite : <code>2x</code> et <code>3sin(x)</code> s’écrivent comme sur la calculatrice.</p>
+      <figure class="sheet" data-kind="product">
+        <img src="plots/fonctions.svg" width="680" height="480" loading="lazy" alt="Deux fonctions sur la grille : x³/6 − x en bleu, 2cos(x) en rouge.">
+        <figcaption><code>sinequanon export -f "x^3/6-x" -f "2cos(x)"</code></figcaption>
+      </figure>
+    </div>
+    <div class="panel" role="tabpanel" id="p-c" aria-labelledby="t-c">
+      <p class="panel__text">x = X(t) et y = Y(t), séparés par un point-virgule, sur le domaine de t que vous fixez.</p>
+      <figure class="sheet" data-kind="product">
+        <img src="plots/parametree.svg" width="680" height="480" loading="lazy" alt="Courbe de Lissajous x = 2cos(3t), y = 2sin(2t), en vert.">
+        <figcaption><code>sinequanon export -c "2cos(3t);2sin(2t)" --t-min -3.1416 --t-max 3.1416</code></figcaption>
+      </figure>
+    </div>
+    <div class="panel" role="tabpanel" id="p-p" aria-labelledby="t-p">
+      <p class="panel__text">r = f(θ), en tapant <code>theta</code> ou <code>θ</code>. La rose à trois pétales tient sur une demi-période.</p>
+      <figure class="sheet" data-kind="product">
+        <img src="plots/polaire.svg" width="680" height="480" loading="lazy" alt="Rose polaire à trois pétales r = 2cos(3θ), en rouge.">
+        <figcaption><code>sinequanon export -p "2cos(3theta)" --t-min 0 --t-max 3.1416 --unite-mm 22</code></figcaption>
+      </figure>
+    </div>
+    <div class="panel" role="tabpanel" id="p-l" aria-labelledby="t-l">
+      <p class="panel__text">Une échelle logarithmique sur un axe ou sur les deux : log(x) devient une droite.</p>
+      <figure class="sheet" data-kind="product">
+        <img src="plots/log.svg" width="680" height="480" loading="lazy" alt="log(x) tracée en droite sur un axe des abscisses gradué de 10⁻³ à 10⁵.">
+        <figcaption><code>sinequanon export -f "log(x)" --log-x --origine-x 10</code></figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="section section--l" aria-labelledby="syntaxe-h">
+  <div class="container split">
+    <div>
+      <h2 id="syntaxe-h">La syntaxe de la calculatrice.</h2>
+      <table class="syntax">
+        <thead><tr><th scope="col">Pour</th><th scope="col">Écrire</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Opérations</th><td><code>+ - * / ^</code></td></tr>
+          <tr><th scope="row">Fonctions</th><td><code>sin cos tan exp ln log sqrt abs</code></td></tr>
+          <tr><th scope="row">Constantes</th><td><code>pi π e</code></td></tr>
+          <tr><th scope="row">Variables</th><td><code>x t theta θ</code></td></tr>
+          <tr><th scope="row">Produit implicite</th><td><code>2x 3sin(2x)</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <figure class="sheet" data-kind="product">
+      <img src="plots/syntaxe.svg" width="680" height="480" loading="lazy" alt="tan(x) en bleu, coupée à chaque asymptote, et 3sin(2x)/2 en rouge.">
+      <figcaption>Les asymptotes de tan(x) sont coupées, jamais reliées. <code>sinequanon export -f "tan(x)" -f "3sin(2x)/2"</code></figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section well" id="feuille-de-route" aria-labelledby="route-h">
+  <div class="container">
+    <div class="split-head">
+      <h2 id="route-h">Un module par version.</h2>
+      <p class="lead">La parité, option par option, avec le Sine qua non 2.9.4 d’origine.</p>
+    </div>
+    <table class="roadmap">
+      <thead><tr><th scope="col">Version</th><th scope="col">Module</th><th scope="col">Publication</th></tr></thead>
+      <tbody>
+        <tr><td class="num">v0.1</td><th scope="row">Courbes, axes, grille 5 × 5 mm, export SVG et PNG</th><td><a href="https://github.com/devfrp/sinequanon/releases/tag/v0.1.0"><time datetime="2026-10-28">28 oct. 2026</time></a></td></tr>
+        <tr class="is-current"><td class="num">v0.2</td><th scope="row">Points, tangentes, intégrales hachurées, interface bilingue</th><td><a href="https://github.com/devfrp/sinequanon/releases/tag/v0.2.0"><time datetime="2026-10-28">28 oct. 2026</time></a></td></tr>
+        <tr><td class="num">v0.3</td><th scope="row">Tableau de variations automatique</th><td>En cours</td></tr>
+        <tr><td class="num"></td><th scope="row">Statistiques : séries, histogramme, boîte à moustaches</th><td>Prévu</td></tr>
+        <tr><td class="num"></td><th scope="row">Probabilités : arbres pondérés, lois binomiale et normale</th><td>Prévu</td></tr>
+        <tr><td class="num"></td><th scope="row">Suites numériques, extremums et zéros</th><td>Prévu</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section band" id="installer" aria-labelledby="installer-h">
+  <div class="container split">
+    <div>
+      <h2 id="installer-h">L’installer chez vous.</h2>
+      <table class="platforms">
+        <tbody>
+          <tr><th scope="row">Linux</th><td><code>curl -fsSL https://raw.githubusercontent.com/devfrp/sinequanon/main/install.sh | bash</code><small>Somme SHA-256 vérifiée à l’installation.</small></td></tr>
+          <tr><th scope="row">Windows</th><td><a href="https://github.com/devfrp/sinequanon/releases/latest/download/sinequanon-windows-x86_64.exe">sinequanon-windows-x86_64.exe</a></td></tr>
+          <tr><th scope="row">macOS</th><td><a href="https://github.com/devfrp/sinequanon/releases/latest/download/sinequanon-macos-universal.tar.gz">sinequanon-macos-universal.tar.gz</a><small>arm64 et x86_64 dans un seul binaire.</small></td></tr>
+          <tr><th scope="row">Sources</th><td><code>cargo build --release</code></td></tr>
+        </tbody>
+      </table>
+      <div class="actions">
+        <a class="btn btn--primary" href="https://github.com/devfrp/sinequanon/releases/latest">Toutes les versions</a>
+      </div>
+    </div>
+    <figure class="sheet" data-kind="product">
+      <div class="sheet__head"><span>limacon.png</span><span>6 px par mm</span></div>
+      <img src="plots/limacon.png" width="1020" height="720" loading="lazy" alt="Limaçon de Pascal r = 2 + cos(θ), exporté en PNG.">
+      <figcaption><code>sinequanon export -p "2+cos(theta)" --png limacon.png --px-par-mm 6</code></figcaption>
+    </figure>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="container">
+    <p class="footer__mast">Sine qua non</p>
+    <div class="footer__cols">
+      <p>Réécriture indépendante en Rust du logiciel créé par Patrice Rabiller en 2004 et coécrit par Patrick Pradeau depuis 2010. Aucun code Delphi n’est repris. Les figures de cette page sont produites par <code>sinequanon export</code> à chaque publication.</p>
+      <ul class="footer__links">
+        <li><a href="https://github.com/devfrp/sinequanon">Dépôt GitHub</a></li>
+        <li><a href="https://github.com/devfrp/sinequanon/blob/main/README.en.md">Readme in English</a></li>
+        <li><a href="https://github.com/devfrp/sinequanon/blob/main/LICENSE">Licence MIT</a></li>
+        <li><a href="http://www.patrice-rabiller.fr/SineQuaNon/menusqn.htm">Le Sine qua non original</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+
+<script>
+document.querySelectorAll('[data-tabs]').forEach((list) => {
+  const tabs = [...list.querySelectorAll('[role="tab"]')];
+  const show = (tab, focus) => {
+    tabs.forEach((t) => {
+      const on = t === tab;
+      t.setAttribute('aria-selected', on);
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    });
+    if (focus) tab.focus();
+  };
+  tabs.forEach((t, i) => {
+    t.addEventListener('click', () => show(t));
+    t.addEventListener('keydown', (e) => {
+      const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (d) { e.preventDefault(); show(tabs[(i + d + tabs.length) % tabs.length], true); }
+    });
+  });
+  show(tabs[0]);
+});
+document.querySelectorAll('[data-copy]').forEach((btn) => {
+  const status = btn.parentElement.querySelector('[data-copy-status]');
+  btn.addEventListener('click', () => {
+    const text = btn.dataset.copy;
+    navigator.clipboard.writeText(text)
+      .then(() => { btn.textContent = 'Copié'; status.textContent = 'Commande copiée.'; })
+      .catch(() => { status.textContent = 'Copie impossible : sélectionnez la commande.'; });
+    setTimeout(() => { btn.textContent = 'Copier'; }, 2000);
+  });
+});
+</script>
+</body>
+</html>
