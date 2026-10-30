@@ -14,7 +14,7 @@ built for mathematics teachers and their students.
 
 ![Example](docs/exemple.png)
 
-## v0.2 status — plotting core + annotations
+## v0.3 status — sign and variation tables
 
 | Included | Details |
 |---|---|
@@ -24,13 +24,15 @@ built for mathematics teachers and their students.
 | Points | placed on any curve (function, parametric, polar) with displayed coordinates |
 | Tangents | at a point of a function — numeric derivative (central differences), displayed `y = mx + p` equation |
 | Integrals | **hatched** areas between the curve and the x-axis, displayed `∫ ≈` value (trapezoid rule) |
-| Interface | graphical (egui), **bilingual English / French** (selector, persisted), wheel = zoom, drag = pan, auto-saved session (curves **+ language + annotations**) |
-| Export | **SVG** (mm, printable 1:1, vector labels and hatching) and **PNG** (hatching, markers) |
+| **Tables** | **text code faithful to the original**: cells `[a:b:c]`, separators `|` `\|\|` `\|0` `0`, single-bar fallback, arrows `/:>` `\:>` `_>`, hatching `//`, macros `\infty` `\sqrt{}` `\frac{a}{b}` `\array{}` `\text{}` `\left\|` — rendered with bars **per row**, zeros **on** the bars, values **centred on** the boundaries, stretched arrows with clearance; the original's 10 examples included (`Var1…Var8`, `Sgn`, `Abs`) |
+| **Generator** | **“⚡ From a curve”**: zeros of f′ by scanning + bisection, signs, f values at critical points and endpoints, arrows — generated code remains **editable** |
+| Interface | graphical (egui), **bilingual English / French** (selector, persisted), wheel = zoom, drag = pan, auto-saved session (curves + language + annotations **+ tables**) |
+| Export | **SVG** (mm, printable 1:1, vector labels and hatching) and **PNG** (hatching, markers, bitmap text) — tables included |
 | Analysis | calculator syntax, implicit multiplication (`2x`, `3sin(x)`), asymptote clipping |
 
 **Not yet included** (roadmap, one module per release): statistics, probability
-distributions (binomial, normal), weighted probability trees, variation
-tables, sequences, extrema/zeros, LaTeX expressions, BMP/GIF/EMF/EPS export,
+distributions (binomial, normal), weighted probability trees,
+sequences, extrema/zeros, LaTeX expressions, BMP/GIF/EMF/EPS export,
 Bézier curves, printing, global preferences.
 
 ## Installation
@@ -129,15 +131,17 @@ git tag v0.2.0 && git push --tags     # automatic build + release
   scratch — zero compiled C dependencies.
 - `src/expr.rs` parser/evaluator · `src/grid.rs` mm axes ·
   `src/curve.rs` curves + line styles · `src/annot.rs` points/tangents/
-  integrals (central derivative, trapezoids, hatching) · `src/render.rs` SVG/PNG ·
-  `src/png.rs` raster + encoder · `src/i18n.rs` bilingual strings ·
-  `src/app.rs` interface · `src/session.rs` JSON session.
+  integrals (central derivative, trapezoids, hatching) · `src/tableau.rs`
+  sign/variation tables (original grammar) · `src/tabgen.rs` generator
+  from a curve · `src/render.rs` SVG/PNG ·
+  `src/png.rs` raster + encoder + 5×7 bitmap font · `src/i18n.rs` bilingual
+  strings · `src/app.rs` interface · `src/session.rs` JSON session.
 
 ## Roadmap (option-by-option parity with the original 2.9.4)
 
 - ✅ v0.1 — plotting core: curves, axes, 5 × 5 mm grid, SVG/PNG, session
 - ✅ v0.2 — graphical module: points, tangents, hatched integrals + bilingual interface
-- ⬜ v0.3 — automatic variation table (derivative, limits)
+- ✅ v0.3 — sign and variation tables (original's text code) + generation from a curve
 - ⬜ statistics (data series, histogram, frequency polygon, box plot)
 - ⬜ probability (weighted trees, binomial distribution, normal distribution)
 - ⬜ numeric sequences (staircase mode)

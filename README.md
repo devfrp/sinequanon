@@ -14,7 +14,7 @@ destiné aux professeurs de mathématiques et à leurs élèves.
 
 ![Exemple](docs/exemple.png)
 
-## État v0.2 — cœur graphique + annotations
+## État v0.3 — tableaux de signes et de variations
 
 | Inclus | Détail |
 |---|---|
@@ -24,14 +24,16 @@ destiné aux professeurs de mathématiques et à leurs élèves.
 | Points | placés sur n'importe quelle courbe (fonction, paramétrée, polaire) avec coordonnées affichées |
 | Tangentes | en un point d'une fonction — dérivée numérique (différences centrées), équation `y = mx + p` affichée |
 | Intégrales | aires **hachurées** entre la courbe et l'axe des abscisses, valeur `∫ ≈` (trapèzes) |
-| Interface | graphique (egui), **bilingue français / anglais** (sélecteur, persisté), molette = zoom, glisser = déplacer, session auto-sauvegardée (courbes **+ langue + annotations**) |
-| Export | **SVG** (mm, imprimable 1:1, labels et hachures vectoriels) et **PNG** (hachures, marqueurs) |
+| **Tableaux** | **code texte fidèle à l'original** : cases `[a:b:c]`, séparateurs `|` `||` `|0` `0`, repli barre simple, flèches `/:>` `\:>` `_>`, hachures `//`, macros `\infty` `\sqrt{}` `\frac{a}{b}` `\array{}` `\text{}` `\left|` — rendu avec barres **par rangée**, zéros **sur** les barres, valeurs **centrées sur** les frontières, flèches étirées avec garde ; 10 exemples de l'original inclus (`Var1…Var8`, `Sgn`, `Abs`) |
+| **Générateur** | **« ⚡ Depuis une courbe »** : zéros de f′ par balayage + bissection, signes, valeurs de f aux points critiques et aux bornes, flèches — code généré **éditable** dans la fenêtre du tableau |
+| Interface | graphique (egui), **bilingue français / anglais** (sélecteur, persisté), molette = zoom, glisser = déplacer, session auto-sauvegardée (courbes + langue + annotations **+ tableaux**) |
+| Export | **SVG** (mm, imprimable 1:1, labels et hachures vectoriels) et **PNG** (hachures, marqueurs, texte bitmap) — tableaux inclus |
 | Analyse | syntaxe calculatrice, multiplication implicite (`2x`, `3sin(x)`), coupure aux asymptotes |
 
 **Pas encore inclus** (feuille de route, une release par module) :
 statistiques, lois de probabilité (binomiale, normale), arbres pondérés,
-tableaux de variations, suites, extrema/zéros, expressions LaTeX,
-export BMP/GIF/EMF/EPS, courbes de Bézier, impression, préférences globales.
+suites, extrema/zéros, expressions LaTeX, export BMP/GIF/EMF/EPS,
+courbes de Bézier, impression, préférences globales.
 
 ## Installation
 
@@ -126,15 +128,17 @@ git tag v0.2.0 && git push --tags     # build + release automatiques
   écrits maison — zéro dépendance C compilée.
 - `src/expr.rs` analyseur/évaluateur · `src/grid.rs` repère mm ·
   `src/curve.rs` courbes + styles de trait · `src/annot.rs` points/tangentes/
-  intégrales (dérivée centrée, trapèzes, hachures) · `src/render.rs` SVG/PNG ·
-  `src/png.rs` raster + encodeur · `src/i18n.rs` bilinguisme ·
-  `src/app.rs` interface · `src/session.rs` sauvegarde JSON.
+  intégrales (dérivée centrée, trapèzes, hachures) · `src/tableau.rs`
+  tableaux de signes/variations (grammaire de l'original) · `src/tabgen.rs`
+  générateur depuis une courbe · `src/render.rs` SVG/PNG ·
+  `src/png.rs` raster + encodeur + police bitmap 5×7 · `src/i18n.rs`
+  bilinguisme · `src/app.rs` interface · `src/session.rs` sauvegarde JSON.
 
 ## Feuille de route (parité option par option avec l'original 2.9.4)
 
 - ✅ v0.1 — cœur traceur : courbes, repère, grille 5 × 5 mm, SVG/PNG, session
 - ✅ v0.2 — module graphique : points, tangentes, intégrales hachurées + interface bilingue
-- ⬜ v0.3 — tableau de variations automatique (dérivée, limites)
+- ✅ v0.3 — tableaux de signes et de variations (code de l'original) + génération depuis une courbe
 - ⬜ statistiques (série, histogramme, polygone des effectifs, boîte à moustaches)
 - ⬜ probabilités (arbres pondérés, loi binomiale, loi normale)
 - ⬜ suites numériques (mode escalier)
