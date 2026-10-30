@@ -84,6 +84,9 @@ pub struct T {
     pub couleur_traits: &'static str,
     pub couleur_textes: &'static str,
     pub position_t: &'static str,
+    pub depuis_courbe: &'static str,
+    pub courbe_l: &'static str,
+    pub generer: &'static str,
 }
 
 pub const FR: T = T {
@@ -142,6 +145,9 @@ pub const FR: T = T {
     couleur_traits: "Traits :",
     couleur_textes: "Textes :",
     position_t: "Position (mm) :",
+    depuis_courbe: "⚡ Depuis une courbe",
+    courbe_l: "Courbe :",
+    generer: "Générer",
 };
 
 pub const EN: T = T {
@@ -200,6 +206,9 @@ pub const EN: T = T {
     couleur_traits: "Lines:",
     couleur_textes: "Texts:",
     position_t: "Position (mm):",
+    depuis_courbe: "⚡ From a curve",
+    courbe_l: "Curve:",
+    generer: "Generate",
 };
 
 /// Table de chaînes pour la langue donnée.

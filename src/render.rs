@@ -827,12 +827,15 @@ mod tests {
         }
     }
 
+    /// Aperçus PNG pour contrôle visuel : les 10 exemples du module
+    /// tableau et deux tableaux générés depuis une courbe.
+    /// Sans `SQN_TMP` défini, le test ne fait rien (au départ de cargo).
     #[test]
-    fn dump_exemples_visuels() {
-        if std::env::var("SQN_TMP").is_err() {
+    fn dump_visuel() {
+        let Ok(dir) = std::env::var("SQN_TMP") else {
             return;
-        }
-        let dir = std::path::PathBuf::from(std::env::var("SQN_TMP").unwrap());
+        };
+        let dir = std::path::PathBuf::from(dir);
         for (nom, code) in crate::tableau::exemples() {
             let mut t = crate::tableau::parse(code).unwrap();
             t.dessiner = true;
@@ -847,6 +850,24 @@ mod tests {
             t.y_mm = 5.0;
             let path = dir.join(format!("ex-{nom}.png"));
             write_png_file(&p, &[], &[], &[t], 10.0, &path).unwrap();
+        }
+        // tableaux générés depuis une courbe
+        for (nom, (e, a, b)) in [
+            ("gen-para", ("x^2-2", -3.0, 3.0)),
+            ("gen-sin", ("sin(x)", -4.0, 4.0)),
+        ] {
+            let code = crate::tabgen::genere(e, a, b, true).unwrap();
+            let mut t = crate::tableau::parse(&code).unwrap();
+            t.dessiner = true;
+            let (tw, th) = crate::tableau::dimensions(&t);
+            let p2 = Page {
+                width_mm: tw + 10.0,
+                height_mm: th + 10.0,
+                ..Page::default()
+            };
+            t.x_mm = 5.0;
+            t.y_mm = 5.0;
+            write_png_file(&p2, &[], &[], &[t], 10.0, &dir.join(format!("{nom}.png"))).unwrap();
         }
     }
 

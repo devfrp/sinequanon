@@ -14,6 +14,7 @@ mod i18n;
 mod png;
 mod render;
 mod session;
+mod tabgen;
 mod tableau;
 
 use annot::{IntegraleAnnot, PointAnnot, TangenteAnnot};

@@ -48,6 +48,18 @@ pub struct SqApp {
     pub tableaux: Vec<Tableau>,
     /// fenêtre d'édition ouverte : index du tableau
     pub tab_sel: Option<usize>,
+    /// fenêtre de génération depuis une courbe (état)
+    pub gen: Option<GenEtat>,
+}
+
+/// État de la fenêtre « générer un tableau depuis une courbe ».
+#[derive(Debug, Clone, Copy)]
+pub struct GenEtat {
+    /// courbe (type fonction) choisie
+    pub curve: usize,
+    /// bornes de l'intervalle d'étude
+    pub a: f64,
+    pub b: f64,
 }
 
 impl SqApp {
@@ -96,6 +108,7 @@ impl SqApp {
             annots: Vec::new(),
             tableaux,
             tab_sel: None,
+            gen: None,
         }
     }
 
@@ -563,6 +576,19 @@ impl SqApp {
                 self.tab_sel = Some(self.tableaux.len() - 1);
                 self.dirty = true;
             }
+            if ui.button(t.depuis_courbe).clicked() {
+                let fns = self.courbes_fonctions();
+                if let Some(first) = fns.first() {
+                    let (x0, x1) = self.page.x_range();
+                    self.gen = Some(GenEtat {
+                        curve: *first,
+                        a: x0,
+                        b: x1,
+                    });
+                } else {
+                    self.set_status(format!("✖ {}", t.aucune));
+                }
+            }
         });
         let mut to_delete: Option<usize> = None;
         let mut to_toggle: Option<usize> = None;
@@ -757,6 +783,80 @@ impl SqApp {
         tabl.code = code;
         if let Ok(nt) = tab::parse(&tabl.code) {
             tabl.rows = nt.rows;
+        }
+    }
+
+    /// Indices des courbes de type fonction (évaluables en x).
+    fn courbes_fonctions(&self) -> Vec<usize> {
+        self.curves
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| matches!(c.kind, CurveKind::Fonction { .. }))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Fenêtre « générer un tableau depuis une courbe » : zéros de f′
+    /// (bissection), signes, valeurs ; crée un Tableau éditable.
+    fn fenetre_genere(&mut self, ctx: &egui::Context) {
+        if self.gen.is_none() {
+            return;
+        }
+        let t = i18n::table(self.lang);
+        let mut ouverte = true;
+        let mut faire: Option<(usize, f64, f64)> = None;
+        egui::Window::new(t.depuis_courbe)
+            .open(&mut ouverte)
+            .resizable(false)
+            .show(ctx, |ui| {
+                let fns = self.courbes_fonctions();
+                if fns.is_empty() {
+                    ui.label(RichText::new(t.aucune).weak());
+                    return;
+                }
+                let Some(g) = self.gen.as_mut() else { return };
+                if !fns.contains(&g.curve) {
+                    g.curve = fns[0];
+                }
+                ComboBox::from_label(t.courbe_l)
+                    .selected_text(self.curves[g.curve].label())
+                    .show_ui(ui, |ui| {
+                        for i in fns {
+                            ui.selectable_value(&mut g.curve, i, self.curves[i].label());
+                        }
+                    });
+                ui.horizontal(|ui| {
+                    ui.label("a :");
+                    ui.add(DragValue::new(&mut g.a).speed(0.25));
+                    ui.label("b :");
+                    ui.add(DragValue::new(&mut g.b).speed(0.25));
+                });
+                if ui.button(t.generer).clicked() {
+                    faire = Some((g.curve, g.a, g.b));
+                }
+            });
+        if let Some((ci, a, b)) = faire {
+            let expr = match &self.curves[ci].kind {
+                CurveKind::Fonction { expr } => expr.clone(),
+                _ => String::new(),
+            };
+            match crate::tabgen::genere(&expr, a, b, self.lang == Lang::Fr) {
+                Ok(code) => {
+                    let rows = tab::parse(&code).map(|x| x.rows).unwrap_or_default();
+                    self.tableaux.push(Tableau {
+                        code,
+                        rows,
+                        ..Default::default()
+                    });
+                    self.tab_sel = Some(self.tableaux.len() - 1);
+                    self.dirty = true;
+                    self.gen = None;
+                }
+                Err(e) => self.set_status(format!("✖ {e}")),
+            }
+        }
+        if !ouverte {
+            self.gen = None;
         }
     }
 
@@ -1382,6 +1482,7 @@ impl eframe::App for SqApp {
         self.panneau_lateral(ctx);
         egui::CentralPanel::default().show(ctx, |ui| self.zone_dessin(ui));
         self.fenetre_tableau(ctx);
+        self.fenetre_genere(ctx);
         // sauvegarde automatique si nécessaire
         if self.dirty {
             let s = Session {
