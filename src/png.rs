@@ -362,11 +362,6 @@ fn echelle(size_px: f64) -> f64 {
     (size_px / 7.0).round().max(1.0)
 }
 
-/// Largeur d'un texte en pixels (avance 6 px par caractère à l'échelle 1).
-pub fn texte_largeur_px(s: &str, size_px: f64) -> f64 {
-    s.chars().count() as f64 * 6.0 * echelle(size_px)
-}
-
 /// Peint les bits d'une ligne de glyphe (dx = cisaillement italique).
 fn paint_bits(r: &mut Raster, x: f64, y: f64, u: f64, bits: u8, dx: f64, c: [u8; 4]) {
     for col in 0..5u8 {
