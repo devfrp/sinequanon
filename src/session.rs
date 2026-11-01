@@ -27,6 +27,12 @@ pub struct Session {
     /// tableaux de signes et de variations (v0.3+)
     #[serde(default)]
     pub tableaux: Vec<Tableau>,
+    /// séries statistiques à une variable (v0.4+)
+    #[serde(default)]
+    pub stats: Vec<crate::stats::Serie1>,
+    /// boîtes à moustaches multiples (v0.4+)
+    #[serde(default)]
+    pub boites: Vec<crate::stats::BoitesMultiples>,
 }
 
 /// Chemin du fichier de session selon la plateforme.
@@ -82,10 +88,13 @@ mod tests {
                 b: 2.0,
             }],
             tableaux: vec![crate::tableau::parse("[:x:]||[-\\infty:/:>:2]").unwrap()],
+            stats: vec![crate::stats::exemple_enfants()],
+            boites: vec![],
         };
         let txt = serde_json::to_string(&s).unwrap();
         let back: Session = serde_json::from_str(&txt).unwrap();
         assert_eq!(back, s);
+        assert_eq!(back.stats[0].titre, "Nombre d'enfants dans la famille");
     }
 
     #[test]
@@ -97,5 +106,6 @@ mod tests {
         let s: Session = serde_json::from_str(txt).unwrap();
         assert_eq!(s.lang, Lang::Fr);
         assert!(s.points.is_empty() && s.tangentes.is_empty() && s.integrales.is_empty());
+        assert!(s.tableaux.is_empty() && s.stats.is_empty() && s.boites.is_empty());
     }
 }

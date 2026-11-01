@@ -14,6 +14,23 @@ built for mathematics teachers and their students.
 
 ![Example](docs/exemple.png)
 
+## v0.4 status — statistics: data series at one variable (module v0.4)
+
+The **statistics** module (single-variable data series) is ported, with the
+rendering tuned against the figures of the original v2.9.4 manual
+(histogram, frequency polygon, box plot, bar chart, Henry line).
+
+| Included | Details |
+|---|---|
+| Series | histogram of classes (area ∝ frequency), cumulative frequency polygon, box plot (± quartiles/deciles), bar chart, Henry line (probability law) |
+| Rendering | legend « 🟩 = 1,0 % », **dashed** grid of minor squares 5 × 5 mm, grey axis numbers, ticks crossing the axis, quartile chutes, numbered French values |
+| Interface | statistics window (bilingual FR/EN), Calculs panel (n°, total) |
+
+**Not yet included** (roadmap, one release per module) :
+probability laws (binomial, normal), weighted trees, sequences, extrema/
+zeros, LaTeX expressions, BMP/GIF/EMF/EPS exports, Bézier curves, printing,
+preferences.
+
 ## v0.3 status — sign and variation tables
 
 | Included | Details |
@@ -30,7 +47,7 @@ built for mathematics teachers and their students.
 | Export | **SVG** (mm, printable 1:1, vector labels and hatching) and **PNG** (hatching, markers, bitmap text) — tables included |
 | Analysis | calculator syntax, implicit multiplication (`2x`, `3sin(x)`), asymptote clipping |
 
-**Not yet included** (roadmap, one module per release): statistics, probability
+**Not yet included** (roadmap, one module per release): probability
 distributions (binomial, normal), weighted probability trees,
 sequences, extrema/zeros, LaTeX expressions, BMP/GIF/EMF/EPS export,
 Bézier curves, printing, global preferences.
@@ -142,7 +159,10 @@ git tag v0.2.0 && git push --tags     # automatic build + release
 - ✅ v0.1 — plotting core: curves, axes, 5 × 5 mm grid, SVG/PNG, session
 - ✅ v0.2 — graphical module: points, tangents, hatched integrals + bilingual interface
 - ✅ v0.3 — sign and variation tables (original's text code) + generation from a curve
-- ⬜ statistics (data series, histogram, frequency polygon, box plot)
+- ✅ v0.4 — statistics (module v0.4): data series at one variable (histogram
+  of classes, cumulative frequency polygon, box plot, bar chart, Henry line) —
+  rendering compared against the manual's figures
+- ⬜ probability (weighted trees, binomial distribution, normal distribution)
 - ⬜ probability (weighted trees, binomial distribution, normal distribution)
 - ⬜ numeric sequences (staircase mode)
 - ⬜ automatic extrema and zeros

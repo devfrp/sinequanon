@@ -362,12 +362,117 @@ fn echelle(size_px: f64) -> f64 {
     (size_px / 7.0).round().max(1.0)
 }
 
+/// Largeur d'un texte en pixels (avance 6 px par caractère à l'échelle 1),
+/// utilisée pour l'ancrage des textes statistiques.
+pub fn texte_largeur_px(s: &str, size_px: f64) -> f64 {
+    s.chars().count() as f64 * 6.0 * echelle(size_px)
+}
+
 /// Peint les bits d'une ligne de glyphe (dx = cisaillement italique).
 fn paint_bits(r: &mut Raster, x: f64, y: f64, u: f64, bits: u8, dx: f64, c: [u8; 4]) {
     for col in 0..5u8 {
         if bits & (1 << (4 - col)) != 0 {
             r.rect(x + col as f64 * u + dx, y, u, u, c);
         }
+    }
+}
+
+/// Solide avec tirets : trait pointillé pour les équipotentielles.
+pub fn dashed(r: &mut Raster, x0: f64, y0: f64, x1: f64, y1: f64, c: [u8; 4], thickness: f64) {
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let long = (dx * dx + dy * dy).sqrt();
+    if long < 1.0 {
+        return;
+    }
+    let px = dx / long;
+    let py = dy / long;
+    // 4 px pleins, 3 px vides à l'échelle du raster
+    let pas = 7.0f64.max(2.0 * (thickness + 3.0));
+    let mut t = 0.0;
+    while t < long {
+        let t2 = (t + pas * 0.57).min(long);
+        r.line(
+            x0 + px * t,
+            y0 + py * t,
+            x0 + px * t2,
+            y0 + py * t2,
+            c,
+            thickness,
+        );
+        t += pas;
+    }
+}
+
+/// Remplit un polygone (par balayage, règle pair-impair).
+pub fn poly(r: &mut Raster, pts: &[(f64, f64)], c: [u8; 4]) {
+    if pts.len() < 3 {
+        return;
+    }
+    let ymin = pts.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    let ymax = pts.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+    let mut xs: Vec<f64> = Vec::new();
+    let y0 = ymin.floor() as i64;
+    let y1 = (ymax + 1.0).ceil() as i64;
+    for y in y0..y1 {
+        let yc = y as f64 + 0.5;
+        xs.clear();
+        for seg in pts.windows(2) {
+            let (xa, ya) = seg[0];
+            let (xb, yb) = seg[1];
+            if (ya <= yc && yb > yc) || (yb <= yc && ya > yc) {
+                xs.push(xa + (yc - ya) * (xb - xa) / (yb - ya));
+            }
+        }
+        if xs.len() < 2 {
+            continue;
+        }
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let mut k = 0;
+        while k + 1 < xs.len() {
+            r.line(xs[k], yc, xs[k + 1], yc, c, 1.0);
+            k += 2;
+        }
+    }
+}
+
+/// Disque plein, sous forme de polygone 24 faces (suffisant à cette échelle).
+pub fn disque(r: &mut Raster, cx: f64, cy: f64, ray: f64, c: [u8; 4]) {
+    let n = 24;
+    let mut pts = Vec::with_capacity(n + 1);
+    for i in 0..=n {
+        let a = std::f64::consts::TAU * i as f64 / n as f64;
+        pts.push((cx + ray * a.cos(), cy + ray * a.sin()));
+    }
+    poly(r, &pts, c);
+}
+
+/// Texte vertical (rotation +90°, bas vers le haut) pour les étiquettes
+/// des modalités d'un histogramme qualitatif.
+pub fn draw_text_vertical(r: &mut Raster, x: f64, y: f64, txt: &str, size_px: f64, c: [u8; 4]) {
+    // la police avance de 6 px par caractère à l'échelle 1 ; on écrit
+    // chaque colonne du glyphe tournée en ligne verticale
+    let u = echelle(size_px);
+    let mut avance = 0.0;
+    for ch in txt.chars() {
+        if let Some(g) = glyphe(ch) {
+            for (bit, &ligne) in g.iter().enumerate() {
+                for col in 0..5u8 {
+                    if ligne & (1 << (4 - col)) != 0 {
+                        // bas du glyphe = ligne 6, haut = ligne 0 ;
+                        // colonne 4 (droite) devient le haut de la lettre
+                        r.rect(
+                            x + (6 - bit) as f64 * u - 1.0,
+                            y - avance - (4 - col) as f64 * u,
+                            u,
+                            u,
+                            c,
+                        );
+                    }
+                }
+            }
+        }
+        avance += 6.0 * u;
     }
 }
 
@@ -382,6 +487,44 @@ impl Raster {
             for px in x0..x1 {
                 self.set(px, py, c);
             }
+        }
+    }
+
+    /// Ligne pointillée : tirets alternés (mm), pour la grille des
+    /// statistiques. `pas_mm` = tiret+trou ; longueur du tiret = moitié.
+    #[allow(clippy::too_many_arguments)]
+    pub fn dash_line(
+        &mut self,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        c: [u8; 4],
+        w_px: f64,
+        pas_mm: f64,
+        ppm: f64,
+    ) {
+        let dx = x1 - x0;
+        let dy = y1 - y0;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len <= 0.0 {
+            return;
+        }
+        let n = (len / pas_mm).ceil() as i64 + 1;
+        for i in 0..n {
+            let t0 = (i as f64 * pas_mm / len).min(1.0);
+            let t1 = ((i as f64 * pas_mm + pas_mm * 0.5) / len).min(1.0);
+            if t1 <= t0 {
+                continue;
+            }
+            self.line(
+                (x0 + t0 * dx) * ppm,
+                (y0 + t0 * dy) * ppm,
+                (x0 + t1 * dx) * ppm,
+                (y0 + t1 * dy) * ppm,
+                c,
+                w_px,
+            );
         }
     }
 

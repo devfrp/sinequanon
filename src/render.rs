@@ -3,7 +3,8 @@
 use crate::annot::AnnotDraw;
 use crate::curve::Curve;
 use crate::grid::{Page, PAS_MM};
-use crate::png::Raster;
+use crate::png::{self, Raster};
+use crate::stats::{BoitesMultiples, Piece as PieceStats, Serie1};
 use crate::tableau::{pieces, Piece, Tableau};
 use std::path::Path;
 
@@ -48,6 +49,32 @@ fn svg_line(s: &mut String, x0: f64, y0: f64, x1: f64, y1: f64, stroke: &str, wi
         f(x1),
         f(y1)
     ));
+}
+
+/// Ligne pointillée (petits carreaux de la grille de statistiques) :
+/// tirets de 0,55 mm alternés, comme les captures du manuel.
+fn svg_dashed_line(s: &mut String, x0: f64, y0: f64, x1: f64, y1: f64, stroke: &str, width: f64) {
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let len = (dx * dx + dy * dy).sqrt();
+    let pas = 1.1; // tiret + trou
+    let n = (len / pas).ceil() as i64 + 1;
+    for i in 0..n {
+        let t0 = (i as f64 * pas / len).min(1.0);
+        let t1 = ((i as f64 * pas + 0.55) / len).min(1.0);
+        if t1 <= t0 {
+            continue;
+        }
+        svg_line(
+            s,
+            x0 + t0 * dx,
+            y0 + t0 * dy,
+            x0 + t1 * dx,
+            y0 + t1 * dy,
+            stroke,
+            width,
+        );
+    }
 }
 
 fn svg_text(s: &mut String, x: f64, y: f64, txt: &str, color: &str, anchor: &str) {
@@ -112,8 +139,12 @@ pub fn svg(
     curves: &[CurvePolys],
     annots: &[AnnotDraw],
     tableaux: &[Tableau],
+    stats: &[Serie1],
+    boites: &[BoitesMultiples],
 ) -> String {
     let p = page;
+    // mode stats : les axes viennent des pièces statistiques (grad_x/grad_y)
+    let stats_mode = !stats.is_empty() || !boites.is_empty();
     let mut s = String::with_capacity(64 * 1024);
     s.push_str(&format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -145,144 +176,179 @@ pub fn svg(
         p.width_mm, p.height_mm
     ));
 
-    // grille mineure (5 × 5 mm)
+    // grille mineure (5 × 5 mm). Mode statistiques : petits carreaux
+    // pointillés bleu-gris comme l'original (captures du manuel), sans
+    // lignes majeures par unité ; sinon grille continuelle + majeures,
+    // tels que publiés en v0.2/0.3 pour les courbes.
     let nx = (p.width_mm / PAS_MM).floor() as i64;
     let ny = (p.height_mm / PAS_MM).floor() as i64;
-    for i in 1..nx {
-        let x = i as f64 * PAS_MM;
-        svg_line(&mut s, x, 0.0, x, p.height_mm, "#dbeaf5", 0.2);
-    }
-    for i in 1..ny {
-        let y = i as f64 * PAS_MM;
-        svg_line(&mut s, 0.0, y, p.width_mm, y, "#dbeaf5", 0.2);
-    }
+    if stats_mode {
+        let coul = "#4a5464";
+        for i in 1..nx {
+            svg_dashed_line(
+                &mut s,
+                i as f64 * PAS_MM,
+                0.0,
+                i as f64 * PAS_MM,
+                p.height_mm,
+                coul,
+                0.2,
+            );
+        }
+        for i in 1..ny {
+            svg_dashed_line(
+                &mut s,
+                0.0,
+                i as f64 * PAS_MM,
+                p.width_mm,
+                i as f64 * PAS_MM,
+                coul,
+                0.2,
+            );
+        }
+    } else {
+        for i in 1..nx {
+            let x = i as f64 * PAS_MM;
+            svg_line(&mut s, x, 0.0, x, p.height_mm, "#dbeaf5", 0.2);
+        }
+        for i in 1..ny {
+            let y = i as f64 * PAS_MM;
+            svg_line(&mut s, 0.0, y, p.width_mm, y, "#dbeaf5", 0.2);
+        }
 
-    // lignes majeures (une unité / une décade)
-    let (xlo, xhi) = p.x_range();
-    let (ylo, yhi) = p.y_range();
-    let majors_x = p.majors(xlo, xhi, p.log_x);
-    let majors_y = p.majors(ylo, yhi, p.log_y);
-    for &k in &majors_x {
-        let x = p.mm_x(k);
-        if x.is_finite() && x > 0.0 && x < p.width_mm {
-            svg_line(&mut s, x, 0.0, x, p.height_mm, "#b3cfe3", 0.35);
+        // lignes majeures (une unité / une décade)
+        let (xlo, xhi) = p.x_range();
+        let (ylo, yhi) = p.y_range();
+        let majors_x = p.majors(xlo, xhi, p.log_x);
+        let majors_y = p.majors(ylo, yhi, p.log_y);
+        for &k in &majors_x {
+            let x = p.mm_x(k);
+            if x.is_finite() && x > 0.0 && x < p.width_mm {
+                svg_line(&mut s, x, 0.0, x, p.height_mm, "#b3cfe3", 0.35);
+            }
+        }
+        for &k in &majors_y {
+            let y = p.mm_y(k);
+            if y.is_finite() && y > 0.0 && y < p.height_mm {
+                svg_line(&mut s, 0.0, y, p.width_mm, y, "#b3cfe3", 0.35);
+            }
         }
     }
-    for &k in &majors_y {
-        let y = p.mm_y(k);
-        if y.is_finite() && y > 0.0 && y < p.height_mm {
-            svg_line(&mut s, 0.0, y, p.width_mm, y, "#b3cfe3", 0.35);
-        }
-    }
 
-    // axes et graduations
-    let yax = p.mm_y(0.0);
-    let xax = p.mm_x(0.0);
-    let axe = "#1a1a1a";
-    let has_x_axis = yax.is_finite() && yax >= -0.01 && yax <= p.height_mm + 0.01;
-    let has_y_axis = xax.is_finite() && xax >= -0.01 && xax <= p.width_mm + 0.01;
+    if !stats_mode {
+        // axes et graduations
+        let yax = p.mm_y(0.0);
+        let xax = p.mm_x(0.0);
+        let axe = "#1a1a1a";
+        let has_x_axis = yax.is_finite() && yax >= -0.01 && yax <= p.height_mm + 0.01;
+        let has_y_axis = xax.is_finite() && xax >= -0.01 && xax <= p.width_mm + 0.01;
+        let (xlo, xhi) = p.x_range();
+        let (ylo, yhi) = p.y_range();
+        let majors_x = p.majors(xlo, xhi, p.log_x);
+        let majors_y = p.majors(ylo, yhi, p.log_y);
 
-    s.push_str("<g clip-path=\"url(#page)\">\n");
-    if has_x_axis {
-        svg_line(&mut s, 0.0, yax, p.width_mm, yax, axe, 0.5);
-        // flèche à droite
-        s.push_str(&format!(
-            "<polygon points=\"{},{},{},{},{},{}\" fill=\"{axe}\"/>\n",
-            f(p.width_mm),
-            f(yax),
-            f(p.width_mm - 2.4),
-            f(yax - 0.9),
-            f(p.width_mm - 2.4),
-            f(yax + 0.9)
-        ));
-    }
-    if has_y_axis {
-        svg_line(&mut s, xax, 0.0, xax, p.height_mm, axe, 0.5);
-        // flèche en haut
-        s.push_str(&format!(
-            "<polygon points=\"{},{},{},{},{},{}\" fill=\"{axe}\"/>\n",
-            f(xax),
-            f(0.0),
-            f(xax - 0.9),
-            f(2.4),
-            f(xax + 0.9),
-            f(2.4)
-        ));
-    }
-
-    // labels des graduations, si la place le permet
-    let label_ok_x = match (majors_x.first(), majors_x.last()) {
-        (Some(&a), Some(&b)) => {
-            let da = (p.mm_x(b) - p.mm_x(a)).abs() / majors_x.len().max(1) as f64;
-            da > 7.0
-        }
-        _ => true,
-    };
-    let label_ok_y = match (majors_y.first(), majors_y.last()) {
-        (Some(&a), Some(&b)) => {
-            let da = (p.mm_y(b) - p.mm_y(a)).abs() / majors_y.len().max(1) as f64;
-            da > 7.0
-        }
-        _ => true,
-    };
-
-    let mut origin_done = false;
-    for &k in &majors_x {
-        let x = p.mm_x(k);
-        if !x.is_finite() || x <= 0.0 || x >= p.width_mm {
-            continue;
-        }
+        s.push_str("<g clip-path=\"url(#page)\">\n");
         if has_x_axis {
-            svg_line(&mut s, x, yax - 0.8, x, yax + 0.8, axe, 0.3);
-        }
-        if label_ok_x && k.abs() > 1e-12 {
-            let txt = if p.log_x {
-                format!("10{}", superscript(k.log10().round() as i64))
-            } else {
-                fmt_num(k)
-            };
-            let ytext = if has_x_axis {
-                yax + 4.2
-            } else {
-                p.height_mm - 1.5
-            };
+            svg_line(&mut s, 0.0, yax, p.width_mm, yax, axe, 0.5);
+            // flèche à droite
             s.push_str(&format!(
-                "<text x=\"{}\" y=\"{ytext}\" font-size=\"3\" font-family=\"DejaVu Sans, sans-serif\" fill=\"#333333\" text-anchor=\"middle\">{txt}</text>\n",
-                f(x)
+                "<polygon points=\"{},{},{},{},{},{}\" fill=\"{axe}\"/>\n",
+                f(p.width_mm),
+                f(yax),
+                f(p.width_mm - 2.4),
+                f(yax - 0.9),
+                f(p.width_mm - 2.4),
+                f(yax + 0.9)
             ));
-        }
-        if k.abs() <= 1e-12 && has_y_axis {
-            origin_done = true;
-        }
-    }
-    for &k in &majors_y {
-        let y = p.mm_y(k);
-        if !y.is_finite() || y <= 0.0 || y >= p.height_mm {
-            continue;
         }
         if has_y_axis {
-            svg_line(&mut s, xax - 0.8, y, xax + 0.8, y, axe, 0.3);
-        }
-        if label_ok_y && k.abs() > 1e-12 {
-            let txt = if p.log_y {
-                format!("10{}", superscript(k.log10().round() as i64))
-            } else {
-                fmt_num(k)
-            };
-            let xtext = if has_y_axis { xax - 1.2 } else { 1.5 };
+            svg_line(&mut s, xax, 0.0, xax, p.height_mm, axe, 0.5);
+            // flèche en haut
             s.push_str(&format!(
-                "<text x=\"{xtext}\" y=\"{}\" font-size=\"3\" font-family=\"DejaVu Sans, sans-serif\" fill=\"#333333\" text-anchor=\"end\">{txt}</text>\n",
-                f(y + 1.0)
+                "<polygon points=\"{},{},{},{},{},{}\" fill=\"{axe}\"/>\n",
+                f(xax),
+                f(0.0),
+                f(xax - 0.9),
+                f(2.4),
+                f(xax + 0.9),
+                f(2.4)
             ));
         }
-    }
-    // label de l'origine
-    if has_x_axis && has_y_axis && !origin_done {
-        s.push_str(&format!(
-            "<text x=\"{}\" y=\"{}\" font-size=\"3\" font-family=\"DejaVu Sans, sans-serif\" fill=\"#333333\" text-anchor=\"end\">0</text>\n",
-            f(xax - 1.2),
-            f(yax + 4.2)
-        ));
+
+        // labels des graduations, si la place le permet
+        let label_ok_x = match (majors_x.first(), majors_x.last()) {
+            (Some(&a), Some(&b)) => {
+                let da = (p.mm_x(b) - p.mm_x(a)).abs() / majors_x.len().max(1) as f64;
+                da > 7.0
+            }
+            _ => true,
+        };
+        let label_ok_y = match (majors_y.first(), majors_y.last()) {
+            (Some(&a), Some(&b)) => {
+                let da = (p.mm_y(b) - p.mm_y(a)).abs() / majors_y.len().max(1) as f64;
+                da > 7.0
+            }
+            _ => true,
+        };
+
+        let mut origin_done = false;
+        for &k in &majors_x {
+            let x = p.mm_x(k);
+            if !x.is_finite() || x <= 0.0 || x >= p.width_mm {
+                continue;
+            }
+            if has_x_axis {
+                svg_line(&mut s, x, yax - 0.8, x, yax + 0.8, axe, 0.3);
+            }
+            if label_ok_x && k.abs() > 1e-12 {
+                let txt = if p.log_x {
+                    format!("10{}", superscript(k.log10().round() as i64))
+                } else {
+                    fmt_num(k)
+                };
+                let ytext = if has_x_axis {
+                    yax + 4.2
+                } else {
+                    p.height_mm - 1.5
+                };
+                s.push_str(&format!(
+                    "<text x=\"{}\" y=\"{ytext}\" font-size=\"3\" font-family=\"DejaVu Sans, sans-serif\" fill=\"#333333\" text-anchor=\"middle\">{txt}</text>\n",
+                    f(x)
+                ));
+            }
+            if k.abs() <= 1e-12 && has_y_axis {
+                origin_done = true;
+            }
+        }
+        for &k in &majors_y {
+            let y = p.mm_y(k);
+            if !y.is_finite() || y <= 0.0 || y >= p.height_mm {
+                continue;
+            }
+            if has_y_axis {
+                svg_line(&mut s, xax - 0.8, y, xax + 0.8, y, axe, 0.3);
+            }
+            if label_ok_y && k.abs() > 1e-12 {
+                let txt = if p.log_y {
+                    format!("10{}", superscript(k.log10().round() as i64))
+                } else {
+                    fmt_num(k)
+                };
+                let xtext = if has_y_axis { xax - 1.2 } else { 1.5 };
+                s.push_str(&format!(
+                    "<text x=\"{xtext}\" y=\"{}\" font-size=\"3\" font-family=\"DejaVu Sans, sans-serif\" fill=\"#333333\" text-anchor=\"end\">{txt}</text>\n",
+                    f(y + 1.0)
+                ));
+            }
+        }
+        // label de l'origine
+        if has_x_axis && has_y_axis && !origin_done {
+            s.push_str(&format!(
+                "<text x=\"{}\" y=\"{}\" font-size=\"3\" font-family=\"DejaVu Sans, sans-serif\" fill=\"#333333\" text-anchor=\"end\">0</text>\n",
+                f(xax - 1.2),
+                f(yax + 4.2)
+            ));
+        }
     }
 
     // courbes
@@ -377,8 +443,156 @@ pub fn svg(
     for t in tableaux {
         svg_tableau(&mut s, t);
     }
+    // séries statistiques à une variable, puis boîtes à moustaches
+    // multiples : le fond opaque du camembert masque la grille comme
+    // dans l'original
+    for sr in stats {
+        svg_stats_pieces(&mut s, &sr.draw_list(p));
+    }
+    for b in boites {
+        svg_stats_pieces(&mut s, &b.draw_list(p));
+    }
     s.push_str("</g>\n</svg>\n");
     s
+}
+
+/// SVG d'une liste de pièces statistiques (coordonnées mm de page).
+fn svg_stats_pieces(s: &mut String, pieces: &[PieceStats]) {
+    for piece in pieces {
+        match piece {
+            PieceStats::Fond { mm, w, h } => {
+                // fond opaque : masque grille et axes sous le camembert
+                s.push_str(&format!(
+                    "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"#ffffff\"/>\n",
+                    f(mm.0),
+                    f(mm.1),
+                    f(*w),
+                    f(*h)
+                ));
+            }
+            PieceStats::Rect {
+                mm,
+                w,
+                h,
+                fill,
+                stroke,
+            } => {
+                let (stc, stw) = stroke;
+                let fill_attr = match fill {
+                    Some(c) => format!("fill=\"{}\"", hex(*c)),
+                    None => "fill=\"none\"".to_string(),
+                };
+                s.push_str(&format!(
+                    "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" {fill_attr} stroke=\"{}\" stroke-width=\"{}\"/>\n",
+                    f(mm.0),
+                    f(mm.1),
+                    f(*w),
+                    f(*h),
+                    hex(*stc),
+                    stw
+                ));
+            }
+            PieceStats::Poly { pts, fill, stroke } => {
+                let mut d = String::with_capacity(pts.len() * 14);
+                for (i, (x, y)) in pts.iter().enumerate() {
+                    d.push_str(if i == 0 { "M" } else { "L" });
+                    d.push_str(&format!("{} {} ", f(*x), f(*y)));
+                }
+                d.push('Z');
+                let fill_attr = match fill {
+                    Some(c) => format!("fill=\"{}\"", hex(*c)),
+                    None => "fill=\"none\"".to_string(),
+                };
+                let stroke_attr = match stroke {
+                    Some((c, w)) => format!("stroke=\"{}\" stroke-width=\"{}\"", hex(*c), w),
+                    None => "stroke=\"none\"".to_string(),
+                };
+                s.push_str(&format!(
+                    "<path d=\"{d}\" {fill_attr} {stroke_attr} stroke-linejoin=\"round\"/>\n"
+                ));
+            }
+            PieceStats::Ligne {
+                x0,
+                y0,
+                x1,
+                y1,
+                c,
+                w,
+            } => {
+                svg_line(s, *x0, *y0, *x1, *y1, &hex(*c), *w);
+            }
+            PieceStats::Pointille {
+                x0,
+                y0,
+                x1,
+                y1,
+                c,
+                w,
+            } => {
+                s.push_str(&format!(
+                    "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"{}\" stroke-dasharray=\"1.6 1.3\"/>\n",
+                    f(*x0),
+                    f(*y0),
+                    f(*x1),
+                    f(*y1),
+                    hex(*c),
+                    w
+                ));
+            }
+            PieceStats::Disque {
+                c: centre,
+                r,
+                fill,
+                stroke,
+            } => {
+                let stroke_attr = match stroke {
+                    Some((c, w)) => format!("stroke=\"{}\" stroke-width=\"{}\"", hex(*c), w),
+                    None => "stroke=\"none\"".to_string(),
+                };
+                s.push_str(&format!(
+                    "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\" {stroke_attr}/>\n",
+                    f(centre.0),
+                    f(centre.1),
+                    f(*r),
+                    hex(*fill)
+                ));
+            }
+            PieceStats::Texte {
+                mm,
+                txt,
+                c,
+                taille,
+                ancre,
+                vertical,
+                gras,
+                italique,
+            } => {
+                let mut style = if *gras { " font-weight=\"bold\"" } else { "" }.to_string();
+                if *italique {
+                    style += " font-style=\"italic\"";
+                }
+                let fam = if *italique {
+                    "DejaVu Serif, serif"
+                } else {
+                    "DejaVu Sans, sans-serif"
+                };
+                let rot = if *vertical {
+                    format!(" transform=\"rotate(-90 {} {})\"", f(mm.0), f(mm.1))
+                } else {
+                    String::new()
+                };
+                s.push_str(&format!(
+                    "<text x=\"{}\" y=\"{}\" font-size=\"{}\"{style} font-family=\"{fam}\" fill=\"{}\" text-anchor=\"{}\"{rot}>{}</text>\n",
+                    f(mm.0),
+                    f(mm.1),
+                    fmt_num(*taille),
+                    hex(*c),
+                    ancre,
+                    xml_escape(txt)
+                ));
+            }
+        }
+    }
 }
 
 /// Écrit la page en SVG. Renvoie la taille du fichier.
@@ -387,15 +601,17 @@ pub fn write_svg_file(
     curves: &[CurvePolys],
     annots: &[AnnotDraw],
     tableaux: &[Tableau],
+    stats: &[Serie1],
+    boites: &[BoitesMultiples],
     path: &Path,
 ) -> std::io::Result<usize> {
-    let s = svg(page, curves, annots, tableaux);
+    let s = svg(page, curves, annots, tableaux, stats, boites);
     std::fs::write(path, s.as_bytes())?;
     Ok(s.len())
 }
 
 /// Dessine grille et axes dans un raster (sans texte).
-fn draw_page_raster(r: &mut Raster, p: &Page, ppm: f64) {
+fn draw_page_raster(r: &mut Raster, p: &Page, ppm: f64, stats_mode: bool) {
     let w = r.w as f64;
     let h = r.h as f64;
     let minor = [219, 234, 245, 255];
@@ -404,6 +620,19 @@ fn draw_page_raster(r: &mut Raster, p: &Page, ppm: f64) {
 
     let nx = (p.width_mm / PAS_MM).floor() as i64;
     let ny = (p.height_mm / PAS_MM).floor() as i64;
+    if stats_mode {
+        // petits carreaux pointillés bleu-gris (captures du manuel), pas
+        // de mineures continuelles ni de majeures par unité
+        for i in 1..nx {
+            let x = i as f64 * PAS_MM;
+            r.dash_line(x, 0.0, x, p.height_mm, [62, 68, 84, 255], 1.0, 1.1, ppm);
+        }
+        for i in 1..ny {
+            let y = i as f64 * PAS_MM;
+            r.dash_line(0.0, y, p.width_mm, y, [62, 68, 84, 255], 1.0, 1.1, ppm);
+        }
+        return;
+    }
     for i in 1..nx {
         let x = i as f64 * PAS_MM * ppm;
         r.line(x, 0.0, x, h - 1.0, minor, 1.0);
@@ -426,6 +655,10 @@ fn draw_page_raster(r: &mut Raster, p: &Page, ppm: f64) {
         if y.is_finite() && y > 0.0 && y < h {
             r.line(0.0, y, w - 1.0, y, major, 1.0);
         }
+    }
+
+    if stats_mode {
+        return;
     }
 
     let yax = p.mm_y(0.0);
@@ -621,12 +854,16 @@ fn draw_tableau_raster(r: &mut Raster, t: &Tableau, ppm: f64) {
     }
 }
 
-/// Écrit la page en PNG à `px_per_mm` pixels par millimètre.
+/// Écrit la page en PNG à `px_per_mm` pixels par millimètre (les
+/// arguments décrivent tout le contenu d'une page, d'où leur nombre).
+#[allow(clippy::too_many_arguments)]
 pub fn write_png_file(
     page: &Page,
     curves: &[CurvePolys],
     annots: &[AnnotDraw],
     tableaux: &[Tableau],
+    stats: &[Serie1],
+    boites: &[BoitesMultiples],
     px_per_mm: f64,
     path: &Path,
 ) -> std::io::Result<()> {
@@ -634,7 +871,9 @@ pub fn write_png_file(
     let h = ((page.height_mm * px_per_mm).round() as usize).clamp(16, 20000);
     let ppm = w as f64 / page.width_mm;
     let mut r = Raster::new(w, h, [255, 255, 255, 255]);
-    draw_page_raster(&mut r, page, ppm);
+    // mode stats : les axes viennent des pièces statistiques
+    let stats_mode = !stats.is_empty() || !boites.is_empty();
+    draw_page_raster(&mut r, page, ppm, stats_mode);
     for (curve, polys) in curves {
         if !curve.visible {
             continue;
@@ -658,7 +897,204 @@ pub fn write_png_file(
     for t in tableaux {
         draw_tableau_raster(&mut r, t, ppm);
     }
+    for sr in stats {
+        draw_stats_raster(&mut r, ppm, &sr.draw_list(page));
+    }
+    for b in boites {
+        draw_stats_raster(&mut r, ppm, &b.draw_list(page));
+    }
     r.write_png(path)
+}
+
+/// Rendu raster des pièces statistiques (coordonnées mm → px).
+fn draw_stats_raster(r: &mut Raster, ppm: f64, pieces: &[PieceStats]) {
+    for piece in pieces {
+        match piece {
+            PieceStats::Fond { mm, w, h } => {
+                // fond opaque, par-dessus la grille
+                r.rect(
+                    mm.0 * ppm,
+                    mm.1 * ppm,
+                    w * ppm,
+                    h * ppm,
+                    [255, 255, 255, 255],
+                );
+            }
+            PieceStats::Rect {
+                mm,
+                w,
+                h,
+                fill,
+                stroke,
+            } => {
+                if let Some(c) = fill {
+                    r.rect(
+                        mm.0 * ppm,
+                        mm.1 * ppm,
+                        w * ppm,
+                        h * ppm,
+                        [c[0], c[1], c[2], 255],
+                    );
+                }
+                let (stc, stw) = stroke;
+                let th = (stw * ppm).clamp(0.8, 6.0);
+                let (x0, y0) = (mm.0 * ppm, mm.1 * ppm);
+                let (x1, y1) = ((mm.0 + w) * ppm, (mm.1 + h) * ppm);
+                let c4 = [stc[0], stc[1], stc[2], 255];
+                // contour antihoraire pour couvrir proprement les coins
+                for (xa, ya, xb, yb) in [
+                    (x0, y0, x1, y0),
+                    (x1, y0, x1, y1),
+                    (x1, y1, x0, y1),
+                    (x0, y1, x0, y0),
+                ] {
+                    r.line(xa, ya, xb, yb, c4, th);
+                }
+            }
+            PieceStats::Poly { pts, fill, stroke } => {
+                if let Some(c) = fill {
+                    let pl: Vec<(f64, f64)> = pts.iter().map(|(x, y)| (x * ppm, y * ppm)).collect();
+                    png::poly(r, &pl, [c[0], c[1], c[2], 255]);
+                }
+                if let Some((c, w)) = stroke {
+                    let th = (w * ppm).clamp(0.8, 6.0);
+                    let c4 = [c[0], c[1], c[2], 255];
+                    for seg in pts.windows(2) {
+                        r.line(
+                            seg[0].0 * ppm,
+                            seg[0].1 * ppm,
+                            seg[1].0 * ppm,
+                            seg[1].1 * ppm,
+                            c4,
+                            th,
+                        );
+                    }
+                    // referme le polygone
+                    if pts.len() > 2 {
+                        let (xa, ya) = pts[pts.len() - 1];
+                        let (xb, yb) = pts[0];
+                        r.line(xa * ppm, ya * ppm, xb * ppm, yb * ppm, c4, th);
+                    }
+                }
+            }
+            PieceStats::Ligne {
+                x0,
+                y0,
+                x1,
+                y1,
+                c,
+                w,
+            } => {
+                let th = (w * ppm).clamp(0.8, 14.0);
+                r.line(
+                    x0 * ppm,
+                    y0 * ppm,
+                    x1 * ppm,
+                    y1 * ppm,
+                    [c[0], c[1], c[2], 255],
+                    th,
+                );
+            }
+            PieceStats::Pointille {
+                x0,
+                y0,
+                x1,
+                y1,
+                c,
+                w,
+            } => {
+                let th = (w * ppm).clamp(0.8, 6.0);
+                png::dashed(
+                    r,
+                    x0 * ppm,
+                    y0 * ppm,
+                    x1 * ppm,
+                    y1 * ppm,
+                    [c[0], c[1], c[2], 255],
+                    th,
+                );
+            }
+            PieceStats::Disque {
+                c: centre,
+                r: ray,
+                fill,
+                stroke,
+            } => {
+                png::disque(
+                    r,
+                    centre.0 * ppm,
+                    centre.1 * ppm,
+                    ray * ppm,
+                    [fill[0], fill[1], fill[2], 255],
+                );
+                if let Some((c, _w)) = stroke {
+                    // anneau : petit cercle en segments épais
+                    let th = 1.0f64.max(0.25 * ppm);
+                    let n = 16;
+                    let c4 = [c[0], c[1], c[2], 255];
+                    let ray = ray * ppm;
+                    for i in 0..n {
+                        let a0 = std::f64::consts::TAU * i as f64 / n as f64;
+                        let a1 = std::f64::consts::TAU * (i + 1) as f64 / n as f64;
+                        r.line(
+                            centre.0 * ppm + ray * a0.cos(),
+                            centre.1 * ppm + ray * a0.sin(),
+                            centre.0 * ppm + ray * a1.cos(),
+                            centre.1 * ppm + ray * a1.sin(),
+                            c4,
+                            th,
+                        );
+                    }
+                }
+            }
+            PieceStats::Texte {
+                mm,
+                txt,
+                c,
+                taille,
+                ancre,
+                vertical,
+                gras,
+                italique,
+            } => {
+                // ancrage : largeur mesurée à la taille bitmap (comme le
+                // reste de l'export raster)
+                let size_px = taille * ppm;
+                let c4 = [c[0], c[1], c[2], 255];
+                if *vertical {
+                    let (x, y) = (mm.0 * ppm, mm.1 * ppm);
+                    // ancre : la fin (end) ou le centre (middle) au point
+                    let len = png::texte_largeur_px(txt, size_px);
+                    let (x0, y0) = match *ancre {
+                        "end" => (x, y + len),
+                        "middle" => (x, y + len / 2.0),
+                        _ => (x, y),
+                    };
+                    if *gras {
+                        png::draw_text_vertical(r, x0, y0, txt, size_px, c4);
+                        png::draw_text_vertical(r, x0 + 1.0, y0, txt, size_px, c4);
+                    } else {
+                        png::draw_text_vertical(r, x0, y0, txt, size_px, c4);
+                    }
+                } else {
+                    let w = png::texte_largeur_px(txt, size_px);
+                    let x = match *ancre {
+                        "end" => mm.0 * ppm - w,
+                        "middle" => mm.0 * ppm - w / 2.0,
+                        _ => mm.0 * ppm,
+                    };
+                    // la ligne de base bitmap : la casse monte au-dessus
+                    let y = mm.1 * ppm + (taille * ppm) * 0.72;
+                    if *gras {
+                        r.draw_text(x, y, txt, size_px, c4, *italique);
+                        r.draw_text(x + 1.0, y, txt, size_px, c4, *italique);
+                    } else {
+                        r.draw_text(x, y, txt, size_px, c4, *italique);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -672,7 +1108,7 @@ mod tests {
         let p = Page::default();
         let c = Curve::fonction("sin(x)", [0, 0, 204]);
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c, polys)], &[], &[]);
+        let s = svg(&p, &[(c, polys)], &[], &[], &[], &[]);
         assert!(s.contains("viewBox=\"0 0 170.00 120.00\""), "{s}");
         assert!(s.contains("clipPath"));
         assert!(s.contains("#0000cc"));
@@ -688,7 +1124,7 @@ mod tests {
         };
         let c = Curve::fonction("log(x)", [204, 0, 0]);
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c, polys)], &[], &[]);
+        let s = svg(&p, &[(c, polys)], &[], &[], &[], &[]);
         assert!(
             s.contains("10³") || s.contains("10²") || s.contains("10¹"),
             "{s}"
@@ -711,7 +1147,7 @@ mod tests {
                 b: 2.0,
             }],
         );
-        let s = svg(&p, &[(c, polys)], &annots, &[]);
+        let s = svg(&p, &[(c, polys)], &annots, &[], &[], &[]);
         assert!(s.contains("<pattern"), "trame manquante : {s}");
         assert!(s.contains("url(#hatch-0000cc)"), "{s}");
         assert!(s.contains("rotate(45)"), "{s}");
@@ -730,7 +1166,7 @@ mod tests {
             &[TangenteAnnot { curve: 0, x: 2.0 }],
             &[],
         );
-        let s = svg(&p, &[(c, polys)], &annots, &[]);
+        let s = svg(&p, &[(c, polys)], &annots, &[], &[], &[]);
         assert!(s.matches("<circle").count() == 2, "{s}");
         assert!(s.contains("(1.000 ; 1.000)"), "{s}");
         assert!(s.contains("y = 4.000x"), "{s}");
@@ -744,7 +1180,7 @@ mod tests {
         let dir = std::env::temp_dir().join("sqn-test-svg");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.png");
-        write_png_file(&p, &[(c, polys)], &[], &[], 2.0, &path).unwrap();
+        write_png_file(&p, &[(c, polys)], &[], &[], &[], &[], 2.0, &path).unwrap();
         let data = std::fs::read(&path).unwrap();
         assert_eq!(
             &data[..8],
@@ -773,7 +1209,7 @@ mod tests {
         let dir = std::env::temp_dir().join("sqn-test-svg");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test-annots.png");
-        write_png_file(&p, &[(c, polys)], &annots, &[], 2.0, &path).unwrap();
+        write_png_file(&p, &[(c, polys)], &annots, &[], &[], &[], 2.0, &path).unwrap();
         let data = std::fs::read(&path).unwrap();
         assert_eq!(
             &data[..8],
@@ -788,7 +1224,7 @@ mod tests {
         let mut c = Curve::fonction("sin(x)", [0, 0, 204]);
         c.visible = false;
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c.clone(), polys)], &[], &[]);
+        let s = svg(&p, &[(c.clone(), polys)], &[], &[], &[], &[]);
         assert!(!s.contains("#0000cc"));
         let _ = CurveKind::Fonction {
             expr: String::new(),
@@ -802,7 +1238,7 @@ mod tests {
         t.dessiner = true;
         t.x_mm = 10.0;
         t.y_mm = 12.0;
-        let s = svg(&p, &[], &[], &[t.clone()]);
+        let s = svg(&p, &[], &[], &[t.clone()], &[], &[]);
         let g = s
             .split('\n')
             .find(|l| l.contains("<g transform="))
@@ -819,7 +1255,7 @@ mod tests {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::env::temp_dir());
         let path = dir.join("sqn_test_tableau.png");
-        write_png_file(&p, &[], &[], &[t], 6.0, &path).unwrap();
+        write_png_file(&p, &[], &[], &[t], &[], &[], 6.0, &path).unwrap();
         let txt = std::fs::read(&path).unwrap();
         assert_eq!(&txt[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
         if std::env::var("SQN_TMP").is_err() {
@@ -849,7 +1285,7 @@ mod tests {
             t.x_mm = 5.0;
             t.y_mm = 5.0;
             let path = dir.join(format!("ex-{nom}.png"));
-            write_png_file(&p, &[], &[], &[t], 10.0, &path).unwrap();
+            write_png_file(&p, &[], &[], &[t], &[], &[], 10.0, &path).unwrap();
         }
         // tableaux générés depuis une courbe
         for (nom, (e, a, b)) in [
@@ -867,7 +1303,17 @@ mod tests {
             };
             t.x_mm = 5.0;
             t.y_mm = 5.0;
-            write_png_file(&p2, &[], &[], &[t], 10.0, &dir.join(format!("{nom}.png"))).unwrap();
+            write_png_file(
+                &p2,
+                &[],
+                &[],
+                &[t],
+                &[],
+                &[],
+                10.0,
+                &dir.join(format!("{nom}.png")),
+            )
+            .unwrap();
         }
     }
 

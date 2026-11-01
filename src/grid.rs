@@ -23,10 +23,30 @@ pub struct Page {
     pub cy: f64,
     /// longueur d'une unité utilisateur, en mm
     pub unit_mm: f64,
+    /// longueur d'une unité utilisateur sur l'axe des ordonnées (v0.4+) ;
+    /// à défaut, celle de `unit_mm` (repère original : unités séparées)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_y_mm: Option<f64>,
     /// échelle logarithmique sur x (une unité = une décade)
     pub log_x: bool,
     /// échelle logarithmique sur y (une unité = une décade)
     pub log_y: bool,
+    /// unité de graduation des axes (valeur affichée à chaque numéro, en
+    /// coordonnées utilisateur ; v0.4+, tuée à 1 comme avant)
+    #[serde(default = "grad_defaut")]
+    pub grad_x: f64,
+    #[serde(default = "grad_defaut")]
+    pub grad_y: f64,
+    /// valeur utilisateur du croisement des axes (v0.4+) : l'original
+    /// place les axes à n'importe quelle origine, pas forcément 0
+    #[serde(default)]
+    pub origin_x: f64,
+    #[serde(default)]
+    pub origin_y: f64,
+}
+
+fn grad_defaut() -> f64 {
+    1.0
 }
 
 impl Default for Page {
@@ -37,8 +57,13 @@ impl Default for Page {
             cx: 0.0,
             cy: 0.0,
             unit_mm: 20.0,
+            unit_y_mm: None,
             log_x: false,
             log_y: false,
+            grad_x: 1.0,
+            grad_y: 1.0,
+            origin_x: 0.0,
+            origin_y: 0.0,
         }
     }
 }
@@ -53,45 +78,55 @@ impl Page {
         }
     }
 
-    fn forward(&self, u: f64, center: f64, log: bool) -> f64 {
+    fn forward(&self, u: f64, center: f64, log: bool, unit: f64) -> f64 {
         if log {
             let c = Self::log_center(center);
             if u <= 0.0 {
                 return f64::NAN;
             }
-            (u.log10() - c.log10()) * self.unit_mm
+            (u.log10() - c.log10()) * unit
         } else {
-            (u - center) * self.unit_mm
+            (u - center) * unit
         }
     }
 
-    fn backward(&self, m: f64, center: f64, log: bool) -> f64 {
+    fn backward(&self, m: f64, center: f64, log: bool, unit: f64) -> f64 {
         if log {
             let c = Self::log_center(center);
-            10f64.powf(c.log10() + m / self.unit_mm)
+            10f64.powf(c.log10() + m / unit)
         } else {
-            center + m / self.unit_mm
+            center + m / unit
         }
+    }
+
+    /// Unité utilisateur de l'axe des ordonnées (par défaut : celle de X).
+    pub fn unit_y(&self) -> f64 {
+        self.unit_y_mm.unwrap_or(self.unit_mm)
     }
 
     /// Position (mm depuis le bord gauche) de l'abscisse utilisateur `x`.
     pub fn mm_x(&self, x: f64) -> f64 {
-        self.forward(x, self.cx, self.log_x) + self.width_mm / 2.0
+        self.forward(x, self.cx, self.log_x, self.unit_mm) + self.width_mm / 2.0
     }
 
     /// Position (mm depuis le bord haut) de l'ordonnée utilisateur `y`.
     pub fn mm_y(&self, y: f64) -> f64 {
-        self.height_mm / 2.0 - self.forward(y, self.cy, self.log_y)
+        self.height_mm / 2.0 - self.forward(y, self.cy, self.log_y, self.unit_y())
     }
 
     /// Abscisse utilisateur du point situé à `mm` du bord gauche.
     pub fn x_at_mm(&self, mm: f64) -> f64 {
-        self.backward(mm - self.width_mm / 2.0, self.cx, self.log_x)
+        self.backward(mm - self.width_mm / 2.0, self.cx, self.log_x, self.unit_mm)
     }
 
     /// Ordonnée utilisateur du point situé à `mm` du bord haut.
     pub fn y_at_mm(&self, mm: f64) -> f64 {
-        self.backward(self.height_mm / 2.0 - mm, self.cy, self.log_y)
+        self.backward(
+            self.height_mm / 2.0 - mm,
+            self.cy,
+            self.log_y,
+            self.unit_y(),
+        )
     }
 
     /// Plage d'abscisses visibles (bord gauche, bord droit).

@@ -14,9 +14,11 @@ mod i18n;
 mod png;
 mod render;
 mod session;
+mod stats;
 mod tabgen;
 mod tableau;
 
+use crate::render::CurvePolys;
 use annot::{IntegraleAnnot, PointAnnot, TangenteAnnot};
 use curve::{apply_style, Curve, CurveKind, PALETTE};
 use eframe::egui;
@@ -125,6 +127,11 @@ struct Opts {
     png: Option<String>,
     px_par_mm: f64,
     page: Page,
+    /// séries statistiques à une variable (v0.4), chargées depuis le
+    /// fichier de session
+    serie1: Vec<stats::Serie1>,
+    /// boîtes à moustaches multiples (v0.4)
+    boites: Vec<stats::BoitesMultiples>,
 }
 
 impl Default for Opts {
@@ -142,6 +149,8 @@ impl Default for Opts {
             png: None,
             px_par_mm: 4.0,
             page: Page::default(),
+            serie1: Vec::new(),
+            boites: Vec::new(),
         }
     }
 }
@@ -210,6 +219,18 @@ fn exporter(args: &[String]) -> Result<(), String> {
                 // toléré sur la ligne export (sans effet sur la sortie)
                 valeur(args, &mut i, a)?;
             }
+            "--session" => {
+                // v0.4 : charge page, repère et séries statistiques d'une
+                // session JSON
+                let chemin = valeur(args, &mut i, a)?;
+                let txt = std::fs::read_to_string(&chemin)
+                    .map_err(|e| format!("lecture de {chemin} : {e}"))?;
+                let s: session::Session = serde_json::from_str(&txt)
+                    .map_err(|e| format!("session {chemin} invalide : {e}"))?;
+                o.page = s.page;
+                o.serie1 = s.stats;
+                o.boites = s.boites;
+            }
             "--svg" => o.svg = Some(valeur(args, &mut i, a)?),
             "--png" => o.png = Some(valeur(args, &mut i, a)?),
             "--px-par-mm" => o.px_par_mm = nb(&valeur(args, &mut i, a)?, a)?,
@@ -250,21 +271,28 @@ fn exporter(args: &[String]) -> Result<(), String> {
             PALETTE[(k + 2) % PALETTE.len()],
         ));
     }
-    if curves.is_empty() {
-        return Err("aucune courbe : utilisez -f, -p ou -c (voir --aide)".into());
+    if curves.is_empty() && o.serie1.is_empty() && o.boites.is_empty() {
+        return Err(
+            "aucune courbe ni série statistique : utilisez -f, -p, -c ou --session (voir --aide)"
+                .into(),
+        );
     }
-
-    // nombre d'échantillons : assez fin pour le PNG demandé
-    let n_fn = match &o.png {
-        Some(_) => ((o.page.width_mm * o.px_par_mm).round() as usize).clamp(256, 20000),
-        None => 1600,
+    // polylignes des courbes (vide pour un export statistique seul)
+    let data: Vec<CurvePolys> = if curves.is_empty() {
+        Vec::new()
+    } else {
+        // nombre d'échantillons : assez fin pour le PNG demandé
+        let n_fn = match &o.png {
+            Some(_) => ((o.page.width_mm * o.px_par_mm).round() as usize).clamp(256, 20000),
+            None => 1600,
+        };
+        let mut data = Vec::with_capacity(curves.len());
+        for c in &curves {
+            let polys = curve::sample_curve(c, &o.page, n_fn, 6000)?;
+            data.push((c.clone(), apply_style(polys, c.style)));
+        }
+        data
     };
-
-    let mut data = Vec::with_capacity(curves.len());
-    for c in &curves {
-        let polys = curve::sample_curve(c, &o.page, n_fn, 6000)?;
-        data.push((c.clone(), apply_style(polys, c.style)));
-    }
 
     let points = o
         .points
@@ -284,8 +312,16 @@ fn exporter(args: &[String]) -> Result<(), String> {
     let annots = annot::draw_list(&o.page, &curves, &points, &tangentes, &integrales);
 
     if let Some(svg) = &o.svg {
-        let n = render::write_svg_file(&o.page, &data, &annots, &[], &PathBuf::from(svg))
-            .map_err(|e| format!("écriture de {svg} : {e}"))?;
+        let n = render::write_svg_file(
+            &o.page,
+            &data,
+            &annots,
+            &[],
+            &o.serie1,
+            &o.boites,
+            &PathBuf::from(svg),
+        )
+        .map_err(|e| format!("écriture de {svg} : {e}"))?;
         println!("✔ {svg} écrit ({} octets)", n);
     } else if o.png.is_none() {
         let n = render::write_svg_file(
@@ -293,6 +329,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &data,
             &annots,
             &[],
+            &o.serie1,
+            &o.boites,
             &PathBuf::from("sinequanon.svg"),
         )
         .map_err(|e| format!("écriture de sinequanon.svg : {e}"))?;
@@ -304,6 +342,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &data,
             &annots,
             &[],
+            &o.serie1,
+            &o.boites,
             o.px_par_mm,
             &PathBuf::from(png),
         )

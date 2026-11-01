@@ -14,6 +14,24 @@ destiné aux professeurs de mathématiques et à leurs élèves.
 
 ![Exemple](docs/exemple.png)
 
+## État v0.4 — statistiques : série à une variable (module v0.4)
+
+Le module **statistiques** (données à une variable) est porté, avec le
+rendu repassé en option sur les captures des figures du manuel v2.9.4
+(histogramme, polygone des effectifs, boîte à moustaches, diagramme en
+bâtons, droite de Henry).
+
+| Inclus | Détail |
+|---|---|
+| Série | histogramme en classes (aire ∝ effectif), polygone des effectifs cumulées, boîte à moustaches (± quartiles/déciles), diagramme en bâtons, droite de Henry (loi de probabilité) |
+| Rendu | légende « 🟩 = 1,0 % », grille **pointillée** de petits carreaux 5 × 5 mm, chiffres d'axes gris, ticks qui traversent l'axe, chutes aux quartiles, valeurs numérotées français |
+| Interface | fenêtre « Statistiques à une variable » bilingue FR/EN, panneau Calculs (n°, Total) |
+
+**Pas encore inclus** (feuille de route, une release par module) :
+lois de probabilité (binomiale, normale), arbres pondérés, suites,
+extrema/zéros, expressions LaTeX, export BMP/GIF/EMF/EPS, courbes de
+Bézier, impression, préférences globales.
+
 ## État v0.3 — tableaux de signes et de variations
 
 | Inclus | Détail |
@@ -31,7 +49,7 @@ destiné aux professeurs de mathématiques et à leurs élèves.
 | Analyse | syntaxe calculatrice, multiplication implicite (`2x`, `3sin(x)`), coupure aux asymptotes |
 
 **Pas encore inclus** (feuille de route, une release par module) :
-statistiques, lois de probabilité (binomiale, normale), arbres pondérés,
+lois de probabilité (binomiale, normale), arbres pondérés,
 suites, extrema/zéros, expressions LaTeX, export BMP/GIF/EMF/EPS,
 courbes de Bézier, impression, préférences globales.
 
@@ -139,7 +157,10 @@ git tag v0.2.0 && git push --tags     # build + release automatiques
 - ✅ v0.1 — cœur traceur : courbes, repère, grille 5 × 5 mm, SVG/PNG, session
 - ✅ v0.2 — module graphique : points, tangentes, intégrales hachurées + interface bilingue
 - ✅ v0.3 — tableaux de signes et de variations (code de l'original) + génération depuis une courbe
-- ⬜ statistiques (série, histogramme, polygone des effectifs, boîte à moustaches)
+- ✅ v0.4 — statistiques (module v0.4) : série à une variable (histogramme en
+  classes, polygone des effectifs, boîte à moustaches, diagramme en bâtons,
+  droite de Henry) — rendu comparé aux figures du manuel v2.9.4
+- ⬜ probabilités (arbres pondérés, loi binomiale, loi normale)
 - ⬜ probabilités (arbres pondérés, loi binomiale, loi normale)
 - ⬜ suites numériques (mode escalier)
 - ⬜ extrema et zéros automatiques

@@ -8,6 +8,7 @@ use crate::grid::Page;
 use crate::i18n::{self, Lang};
 use crate::render::{self, CurvePolys};
 use crate::session::{self, Session};
+use crate::stats::{self, BoitesMultiples, Donnees, Piece as PieceStats, Style, Visualiser};
 use crate::tableau::{self as tab, Piece, Tableau};
 use eframe::egui::{
     self, Align2, Color32, ComboBox, DragValue, FontId, Pos2, Rect, RichText, Sense, Stroke,
@@ -46,6 +47,14 @@ pub struct SqApp {
     pub annots: Vec<AnnotDraw>,
     /// tableaux de signes et de variations (v0.3+)
     pub tableaux: Vec<Tableau>,
+    /// séries statistiques à une variable (v0.4+)
+    pub stats: Vec<crate::stats::Serie1>,
+    /// boîtes à moustaches multiples (v0.4+)
+    pub boites: Vec<crate::stats::BoitesMultiples>,
+    /// fenêtre d'édition ouverte : index de la série statistique
+    pub stat_sel: Option<usize>,
+    /// volet actif de la fenêtre statistique (0..=3)
+    pub stat_volet: usize,
     /// fenêtre d'édition ouverte : index du tableau
     pub tab_sel: Option<usize>,
     /// fenêtre de génération depuis une courbe (état)
@@ -64,7 +73,7 @@ pub struct GenEtat {
 
 impl SqApp {
     pub fn new(lang_flag: Option<Lang>) -> Self {
-        let (page, curves, saved_lang, points, tangentes, integrales, tableaux) =
+        let (page, curves, saved_lang, points, tangentes, integrales, tableaux, stats, boites) =
             match session::load() {
                 Some(s) => (
                     s.page,
@@ -74,6 +83,8 @@ impl SqApp {
                     s.tangentes,
                     s.integrales,
                     s.tableaux,
+                    s.stats,
+                    s.boites,
                 ),
                 None => (
                     Page::default(),
@@ -82,6 +93,8 @@ impl SqApp {
                         Curve::fonction("x^2/4 - 2", PALETTE[1]),
                     ],
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Vec::new(),
                     Vec::new(),
                     Vec::new(),
@@ -107,6 +120,10 @@ impl SqApp {
             poly: Vec::new(),
             annots: Vec::new(),
             tableaux,
+            stats,
+            boites,
+            stat_sel: None,
+            stat_volet: 0,
             tab_sel: None,
             gen: None,
         }
@@ -190,6 +207,8 @@ impl SqApp {
                         self.section_annotations(ui);
                         ui.separator();
                         self.section_tableaux(ui);
+                        ui.separator();
+                        self.section_statistiques(ui);
                         ui.separator();
                         self.section_repere(ui);
                         ui.separator();
@@ -921,6 +940,31 @@ impl SqApp {
             }
             ui.small(t.grille);
         });
+        // unité propre à l'axe des ordonnées (v0.4+, unités séparées de
+        // l'original) ; bouton Ajouter si l'unité de X est partagée
+        ui.horizontal(|ui| match self.page.unit_y_mm {
+            None => {
+                ui.label(t.unite_oy_vierge);
+                if ui.small_button("➕").clicked() {
+                    self.page.unit_y_mm = Some(self.page.unit_mm);
+                    self.dirty = true;
+                }
+            }
+            Some(ref mut uy) => {
+                ui.label(t.unite_oy);
+                if ui
+                    .add(
+                        DragValue::new(uy)
+                            .speed(0.5)
+                            .suffix(" mm")
+                            .range(1.0..=100.0),
+                    )
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+            }
+        });
         ui.horizontal(|ui| {
             if ui.checkbox(&mut self.page.log_x, "log X").changed() {
                 self.dirty = true;
@@ -945,8 +989,15 @@ impl SqApp {
             if ui.button("SVG (sinequanon.svg)").clicked() {
                 let data = self.export_data();
                 let path = PathBuf::from("sinequanon.svg");
-                match render::write_svg_file(&self.page, &data, &self.annots, &self.tableaux, &path)
-                {
+                match render::write_svg_file(
+                    &self.page,
+                    &data,
+                    &self.annots,
+                    &self.tableaux,
+                    &self.stats,
+                    &self.boites,
+                    &path,
+                ) {
                     Ok(n) => self.set_status(format!("✔ {} écrit ({} octets)", path.display(), n)),
                     Err(e) => self.set_status(format!("✖ Échec SVG : {e}")),
                 }
@@ -961,6 +1012,8 @@ impl SqApp {
                     &data,
                     &self.annots,
                     &self.tableaux,
+                    &self.stats,
+                    &self.boites,
                     self.px_per_mm as f64,
                     &path,
                 ) {
@@ -1045,6 +1098,7 @@ impl SqApp {
         self.dessine_courbes(&painter, page_rect, ppm);
         self.dessine_annots(&painter, page_rect, ppm);
         self.dessine_tableaux(&painter, page_rect, ppm);
+        self.dessine_stats(&painter, page_rect, ppm);
 
         // lecture des coordonnées sous le curseur
         if let Some(pos) = hover {
@@ -1063,6 +1117,682 @@ impl SqApp {
                     Color32::from_rgb(40, 40, 60),
                 );
             }
+        }
+    }
+
+    /// Section « Statistiques à une variable » du panneau latéral (v0.4).
+    fn section_statistiques(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.horizontal(|ui| {
+            ui.strong(t.stats);
+            if ui.button(t.m_stat).clicked() {
+                if self.stats.is_empty() {
+                    // exemple du manuel (p.45) comme contenu par défaut
+                    self.stats.push(stats::exemple_enfants());
+                }
+                self.stat_sel = Some(0);
+                // le volet suit les données
+                self.stat_volet = match &self.stats[0].donnees {
+                    Donnees::Quali(_) => 0,
+                    Donnees::Isolees(_) => 1,
+                    Donnees::Classes(_) => 2,
+                };
+                self.dirty = true;
+            }
+        });
+        let mut to_delete: Option<usize> = None;
+        let mut to_toggle: Option<usize> = None;
+        for (i, s) in self.stats.iter().enumerate() {
+            let label = if s.titre.is_empty() {
+                format!("{} {}", t.stats, i + 1)
+            } else {
+                s.titre.lines().next().unwrap_or("").to_string()
+            };
+            ui.horizontal(|ui| {
+                let vis = if s.dessiner { "◉" } else { "○" };
+                if ui
+                    .add(egui::Label::new(RichText::new(vis).size(16.0)).sense(Sense::click()))
+                    .clicked()
+                {
+                    to_toggle = Some(i);
+                }
+                if ui
+                    .add(egui::Label::new(RichText::new(label).small()).sense(Sense::click()))
+                    .clicked()
+                {
+                    self.stat_sel = Some(i);
+                    // le volet suit les données de la série cliquée
+                    self.stat_volet = match &self.stats[i].donnees {
+                        Donnees::Quali(_) => 0,
+                        Donnees::Isolees(_) => 1,
+                        Donnees::Classes(_) => 2,
+                    };
+                }
+                if ui.small_button("✕").clicked() {
+                    to_delete = Some(i);
+                }
+            });
+        }
+        if let Some(i) = to_toggle {
+            if let Some(s) = self.stats.get_mut(i) {
+                s.dessiner = !s.dessiner;
+                self.dirty = true;
+            }
+        }
+        if let Some(i) = to_delete {
+            self.stats.remove(i);
+            self.stat_sel = None;
+            self.dirty = true;
+        }
+    }
+
+    /// Fenêtre « Statistiques à une variable » : 4 volets, saisie des
+    /// données et panneau Calculs comme dans l'original.
+    fn fenetre_stat(&mut self, ctx: &egui::Context) {
+        let t = i18n::table(self.lang);
+        if self.stat_sel.is_none() {
+            return;
+        }
+        if self.stats.is_empty() {
+            self.stat_sel = None;
+            return;
+        }
+        let mut ouverte = true;
+        egui::Window::new(t.stats)
+            .open(&mut ouverte)
+            .resizable(true)
+            .default_width(560.0)
+            .show(ctx, |ui| {
+                self.vois_stat(ui);
+            });
+        if !ouverte {
+            self.stat_sel = None;
+        }
+    }
+
+    /// Volets de la fenêtre statistique (0 quali, 1 isolées, 2 classes,
+    /// 3 boîtes multiples) ; le volet actif est `self.stat_volet`.
+    fn vois_stat(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        // démontrer le volet dans le combo (4 volets comme l'original)
+        let volet = self.stat_volet;
+        let labels = [t.v_quali, t.v_isolees, t.v_classes, t.v_boites];
+        ui.horizontal(|ui| {
+            ui.label(t.volet);
+            ComboBox::from_id_salt("volet-stat")
+                .selected_text(labels[volet.min(labels.len() - 1)])
+                .show_ui(ui, |ui| {
+                    for (i, l) in labels.iter().enumerate() {
+                        if ui.selectable_label(volet == i, *l).clicked() && volet != i {
+                            self.stat_volet = i;
+                            if i < 3 {
+                                // adapter données et style au volet choisi,
+                                // comme une boîte de saisie vierge
+                                self.reinit_volet(i);
+                            }
+                            self.dirty = true;
+                        }
+                    }
+                });
+        });
+        ui.separator();
+        // 4e volet : boîtes à moustaches multiples (objet séparé)
+        if self.stat_volet == 3 {
+            self.vois_boites(ui);
+            return;
+        }
+        let idx = self.stat_sel.unwrap_or(0);
+        if self.stats.get(idx).is_none() {
+            return;
+        }
+        let s = &mut self.stats[idx];
+        // emprunt disjoint : les closures écrivent ce compteur
+        let dirty = &mut self.dirty;
+        ui.horizontal(|ui| {
+            ui.label(t.stat_titre);
+            if ui
+                .add(TextEdit::singleline(&mut s.titre).desired_width(240.0))
+                .changed()
+            {
+                *dirty = true;
+            }
+        });
+        ui.checkbox(&mut s.dessiner, t.stat_dessiner);
+        // exemples du manuel (p. 43-45), comme les Var1..Var8 des tableaux
+        let mut to_load: Option<usize> = None;
+        ui.horizontal(|ui| {
+            ui.label(t.exemples);
+            if ui.small_button("Enfants").clicked() {
+                to_load = Some(0);
+            }
+            if ui.small_button("Salaires").clicked() {
+                to_load = Some(1);
+            }
+            if ui.small_button("Diplômes").clicked() {
+                to_load = Some(2);
+            }
+        });
+        if let Some(k) = to_load {
+            // le volet suit les données de l'exemple ; le style vient avec
+            self.stat_volet = [1, 2, 0][k];
+            *s = match k {
+                0 => stats::exemple_enfants(),
+                1 => stats::exemple_salaires(),
+                _ => stats::exemple_quali(),
+            };
+            *dirty = true;
+        }
+        // style du graphique, selon le volet
+        let styles: &[(Style, &str)] = match self.stat_volet {
+            0 => &[
+                (Style::Camembert, t.st_camembert),
+                (Style::Histogramme, t.st_histogramme),
+            ],
+            1 => &[
+                (Style::Batons, t.st_batons),
+                (Style::Boite, t.st_boite),
+                (Style::BoiteAvecDeciles, t.st_boite_deciles),
+            ],
+            _ => &[
+                (Style::Histogramme, t.st_histogramme),
+                (Style::Batons, t.st_batons),
+                (Style::Boite, t.st_boite),
+                (Style::BoiteAvecDeciles, t.st_boite_deciles),
+                (Style::FreqCumul, t.st_cumul),
+                (Style::DroiteHenry, t.st_henry),
+            ],
+        };
+        ui.horizontal(|ui| {
+            ui.label(t.style);
+            let courant = styles
+                .iter()
+                .find(|(st, _)| *st == s.style)
+                .map(|(_, l)| *l)
+                .unwrap_or("");
+            ComboBox::from_id_salt("style-stat")
+                .selected_text(courant)
+                .show_ui(ui, |ui| {
+                    for (st, l) in styles {
+                        let sel = s.style == *st;
+                        if ui.selectable_label(sel, *l).clicked() && !sel {
+                            s.style = *st;
+                            *dirty = true;
+                        }
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            ui.label(t.stat_visualiser);
+            let courant = match s.visualiser {
+                Visualiser::MedianeSeulement => t.vis_mediane,
+                Visualiser::MedianeEtQuartiles => t.vis_q,
+                Visualiser::Tous => t.vis_tous,
+            };
+            ComboBox::from_id_salt("visualiser")
+                .selected_text(courant)
+                .show_ui(ui, |ui| {
+                    let vals = [
+                        (Visualiser::MedianeSeulement, t.vis_mediane),
+                        (Visualiser::MedianeEtQuartiles, t.vis_q),
+                        (Visualiser::Tous, t.vis_tous),
+                    ];
+                    for (v, l) in vals {
+                        let sel = s.visualiser == v;
+                        if ui.selectable_label(sel, l).clicked() && !sel {
+                            s.visualiser = v;
+                            *dirty = true;
+                        }
+                    }
+                });
+        });
+        // options propres aux styles « classes »
+        if matches!(s.donnees, Donnees::Classes(_)) {
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut s.avec_pct, t.st_avec_pct).changed() {
+                    *dirty = true;
+                }
+                ui.label(t.st_canaux);
+                if ui
+                    .add(DragValue::new(&mut s.canaux).speed(0.1).range(0.01..=1e9))
+                    .changed()
+                {
+                    *dirty = true;
+                }
+                if ui.checkbox(&mut s.aff_effectifs, t.st_effectifs).changed() {
+                    *dirty = true;
+                }
+            });
+            if s.style == Style::FreqCumul {
+                ui.horizontal(|ui| {
+                    if ui.checkbox(&mut s.croissantes, t.st_croiss).changed() {
+                        *dirty = true;
+                    }
+                    if ui.checkbox(&mut s.decroissantes, t.st_decroiss).changed() {
+                        *dirty = true;
+                    }
+                });
+            }
+        }
+        ui.separator();
+        // saisie : grille éditable selon le volet
+        match &mut s.donnees {
+            Donnees::Quali(mods) => {
+                egui::Grid::new("quali").striped(true).show(ui, |ui| {
+                    ui.strong(t.stat_nom);
+                    ui.strong(t.stat_effectif);
+                    ui.end_row();
+                    for m in mods.iter_mut() {
+                        if ui
+                            .add(TextEdit::singleline(&mut m.nom).desired_width(200.0))
+                            .changed()
+                        {
+                            *dirty = true;
+                        }
+                        if ui.add(DragValue::new(&mut m.n).range(0.0..=1e12)).changed() {
+                            *dirty = true;
+                        }
+                        ui.end_row();
+                    }
+                });
+                if ui.button(t.st_aj_ligne).clicked() {
+                    let n = mods.len();
+                    mods.push(stats::Modalite {
+                        nom: format!("modalité {n}"),
+                        n: 1.0,
+                        couleur: stats::COULEURS_MODALITES[n % 7],
+                    });
+                    *dirty = true;
+                }
+            }
+            Donnees::Isolees(vals) => {
+                egui::Grid::new("isolees").striped(true).show(ui, |ui| {
+                    ui.strong(t.stat_valeur);
+                    ui.strong(t.stat_effectif);
+                    ui.end_row();
+                    for r in vals.iter_mut() {
+                        if ui
+                            .add(DragValue::new(&mut r.v).speed(0.1).range(-1e12..=1e12))
+                            .changed()
+                        {
+                            *dirty = true;
+                        }
+                        if ui.add(DragValue::new(&mut r.n).range(0.0..=1e12)).changed() {
+                            *dirty = true;
+                        }
+                        ui.end_row();
+                    }
+                });
+                if ui.button(t.st_aj_ligne).clicked() {
+                    vals.push(stats::ValEff { v: 0.0, n: 1.0 });
+                    *dirty = true;
+                }
+            }
+            Donnees::Classes(c) => {
+                egui::Grid::new("classes").striped(true).show(ui, |ui| {
+                    ui.strong(t.stat_borne_inf);
+                    ui.strong(t.stat_borne_sup);
+                    ui.strong(t.stat_effectif);
+                    ui.end_row();
+                    for r in c.iter_mut() {
+                        for x in [&mut r.a, &mut r.b, &mut r.n] {
+                            if ui
+                                .add(DragValue::new(x).speed(1.0).range(0.0..=1e12))
+                                .changed()
+                            {
+                                *dirty = true;
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
+                if ui.button(t.st_aj_ligne).clicked() {
+                    let b = c.last().map(|x| x.b).unwrap_or(0.0);
+                    c.push(stats::Classe {
+                        a: b,
+                        b: b + 100.0,
+                        n: 1.0,
+                    });
+                    *dirty = true;
+                }
+            }
+        }
+        ui.separator();
+        // panneau Calculs, valeurs à la française comme l'original
+        if let Some(pr) = s.parametres() {
+            ui.strong(t.stat_calculs);
+            egui::Grid::new("calculs").num_columns(2).show(ui, |ui| {
+                for (lbl, val) in [
+                    (t.st_n, pr.n),
+                    (t.st_somme, pr.somme),
+                    (t.st_moyenne, pr.moyenne),
+                    (t.st_sigma, pr.sigma),
+                    (t.st_min, pr.minimum),
+                    (t.st_max, pr.maximum),
+                    (t.st_d1, pr.d1),
+                    (t.st_q1, pr.q1),
+                    (t.st_med, pr.mediane),
+                    (t.st_q3, pr.q3),
+                    (t.st_d9, pr.d9),
+                ] {
+                    ui.label(lbl);
+                    ui.label(RichText::new(stats::num(val)).strong());
+                    ui.end_row();
+                }
+            });
+        } else {
+            // volet qualitatif : l'original n'y autorise aucun calcul
+            ui.weak(t.st_aucun_calcul);
+        }
+    }
+
+    /// Réinitialise les données au volet i (contenu « vierge »), en
+    /// conservant titre et couleur ; style compatible avec le volet.
+    fn reinit_volet(&mut self, i: usize) {
+        let Some(idx) = self.stat_sel else {
+            return;
+        };
+        let Some(s) = self.stats.get_mut(idx) else {
+            return;
+        };
+        if !s.donnees.est_volet(i) {
+            s.donnees = match i {
+                0 => Donnees::Quali(vec![stats::Modalite {
+                    nom: "modalité 1".into(),
+                    n: 1.0,
+                    couleur: stats::COULEURS_MODALITES[0],
+                }]),
+                1 => Donnees::Isolees(vec![stats::ValEff { v: 1.0, n: 1.0 }]),
+                _ => Donnees::Classes(vec![stats::Classe {
+                    a: 0.0,
+                    b: 100.0,
+                    n: 1.0,
+                }]),
+            };
+        }
+        // style compatible avec les données du volet
+        match s.donnees {
+            Donnees::Quali(_) => {
+                if s.style != Style::Camembert && s.style != Style::Histogramme {
+                    s.style = Style::Camembert;
+                }
+            }
+            Donnees::Isolees(_) => {
+                if matches!(
+                    s.style,
+                    Style::Histogramme | Style::FreqCumul | Style::DroiteHenry
+                ) {
+                    s.style = Style::Batons;
+                }
+            }
+            Donnees::Classes(_) => {
+                if s.style == Style::Batons {
+                    s.style = Style::Histogramme;
+                }
+            }
+        }
+    }
+
+    /// Éditeur du 4e volet : boîtes à moustaches multiples.
+    fn vois_boites(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        if self.boites.is_empty() {
+            self.boites.push(BoitesMultiples::default());
+            self.dirty = true;
+        }
+        ui.horizontal(|ui| {
+            ui.label(t.stat_titre);
+            if ui
+                .add(TextEdit::singleline(&mut self.boites[0].titre).desired_width(240.0))
+                .changed()
+            {
+                self.dirty = true;
+            }
+        });
+        ui.checkbox(&mut self.boites[0].dessiner, t.stat_dessiner);
+        egui::Grid::new("boites").striped(true).show(ui, |ui| {
+            ui.strong(t.st_legende);
+            ui.strong(t.st_min);
+            ui.strong("D1");
+            ui.strong(t.st_q1);
+            ui.strong(t.st_med);
+            ui.strong(t.st_q3);
+            ui.strong("D9");
+            ui.strong(t.st_max);
+            ui.end_row();
+            for b in self.boites[0].boites.iter_mut() {
+                if ui
+                    .add(TextEdit::singleline(&mut b.legende).desired_width(110.0))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                for x in [
+                    &mut b.min,
+                    &mut b.d1.get_or_insert(0.0),
+                    &mut b.q1,
+                    &mut b.med.get_or_insert(0.0),
+                    &mut b.q3,
+                    &mut b.d9.get_or_insert(0.0),
+                    &mut b.max,
+                ] {
+                    if ui
+                        .add(DragValue::new(x).speed(1.0).range(-1e12..=1e12))
+                        .changed()
+                    {
+                        self.dirty = true;
+                    }
+                }
+                ui.end_row();
+            }
+        });
+        if ui.button(t.st_aj_ligne).clicked() {
+            let n = self.boites[0].boites.len();
+            self.boites[0].boites.push(stats::BoiteMultiple {
+                legende: format!("série {}", n + 1),
+                min: 0.0,
+                q1: 1.0,
+                med: Some(2.0),
+                q3: 3.0,
+                max: 4.0,
+                d1: None,
+                d9: None,
+                couleur: stats::LIME,
+            });
+            self.dirty = true;
+        }
+    }
+
+    /// Dessine les séries statistiques (aperçu GUI, miroir de
+    /// `render::draw_stats_raster`).
+    fn dessine_stats(&self, painter: &egui::Painter, page_rect: Rect, ppm: f32) {
+        let px = |x: f64, y: f64| {
+            Pos2::new(
+                page_rect.left() + x as f32 * ppm,
+                page_rect.top() + y as f32 * ppm,
+            )
+        };
+        let dessiner = |pieces: &[PieceStats]| {
+            for piece in pieces {
+                match piece {
+                    PieceStats::Fond { mm, w, h } => {
+                        painter.rect_filled(
+                            Rect::from_min_size(
+                                px(mm.0, mm.1),
+                                Vec2::new(*w as f32 * ppm, *h as f32 * ppm),
+                            ),
+                            0.0,
+                            Color32::WHITE,
+                        );
+                    }
+                    PieceStats::Rect {
+                        mm,
+                        w,
+                        h,
+                        fill,
+                        stroke,
+                    } => {
+                        let r_ = Rect::from_min_size(
+                            px(mm.0, mm.1),
+                            Vec2::new(*w as f32 * ppm, *h as f32 * ppm),
+                        );
+                        if let Some(c) = fill {
+                            painter.rect_filled(r_, 0.0, Color32::from_rgb(c[0], c[1], c[2]));
+                        }
+                        let (stc, stw) = stroke;
+                        painter.rect_stroke(
+                            r_,
+                            0.0,
+                            Stroke::new(
+                                (*stw as f32 * ppm).clamp(0.7, 4.0),
+                                Color32::from_rgb(stc[0], stc[1], stc[2]),
+                            ),
+                        );
+                    }
+                    PieceStats::Poly { pts, fill, stroke } => {
+                        let pl: Vec<Pos2> = pts.iter().map(|(x, y)| px(*x, *y)).collect();
+                        if let Some(c) = fill {
+                            painter.add(egui::Shape::convex_polygon(
+                                pl.clone(),
+                                Color32::from_rgb(c[0], c[1], c[2]),
+                                Stroke::NONE,
+                            ));
+                        }
+                        if let Some((c, w)) = stroke {
+                            let mut pl2 = pl;
+                            if let Some(first) = pl2.first().copied() {
+                                pl2.push(first);
+                            }
+                            painter.add(egui::Shape::line(
+                                pl2,
+                                Stroke::new(
+                                    (*w as f32 * ppm).clamp(0.7, 4.0),
+                                    Color32::from_rgb(c[0], c[1], c[2]),
+                                ),
+                            ));
+                        }
+                    }
+                    PieceStats::Ligne {
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        c,
+                        w,
+                    } => {
+                        painter.line_segment(
+                            [px(*x0, *y0), px(*x1, *y1)],
+                            Stroke::new(
+                                (*w as f32 * ppm).clamp(0.7, 8.0),
+                                Color32::from_rgb(c[0], c[1], c[2]),
+                            ),
+                        );
+                    }
+                    PieceStats::Pointille {
+                        x0,
+                        y0,
+                        x1,
+                        y1,
+                        c,
+                        w,
+                    } => {
+                        for sh in egui::Shape::dashed_line(
+                            &[px(*x0, *y0), px(*x1, *y1)],
+                            Stroke::new(
+                                (*w as f32 * ppm).clamp(0.7, 4.0),
+                                Color32::from_rgb(c[0], c[1], c[2]),
+                            ),
+                            4.0,
+                            3.0,
+                        ) {
+                            painter.add(sh);
+                        }
+                    }
+                    PieceStats::Disque {
+                        c: centre,
+                        r: ray,
+                        fill,
+                        stroke,
+                    } => {
+                        painter.circle_filled(
+                            px(centre.0, centre.1),
+                            (*ray as f32 * ppm).max(1.5),
+                            Color32::from_rgb(fill[0], fill[1], fill[2]),
+                        );
+                        if let Some((c, w)) = stroke {
+                            painter.circle_stroke(
+                                px(centre.0, centre.1),
+                                (*ray as f32 * ppm).max(1.5),
+                                Stroke::new(
+                                    (*w as f32 * ppm).clamp(0.7, 3.0),
+                                    Color32::from_rgb(c[0], c[1], c[2]),
+                                ),
+                            );
+                        }
+                    }
+                    PieceStats::Texte {
+                        mm,
+                        txt,
+                        c,
+                        taille,
+                        ancre,
+                        vertical,
+                        gras,
+                        ..
+                    } => {
+                        let colour = Color32::from_rgb(c[0], c[1], c[2]);
+                        let font = FontId::proportional((*taille as f32 * ppm).max(3.0));
+                        let align = match (*ancre, *vertical) {
+                            ("start", false) => Align2::LEFT_CENTER,
+                            ("end", false) => Align2::RIGHT_CENTER,
+                            (_, false) => Align2::CENTER_CENTER,
+                            // vertical : chars empilés du bas vers le haut
+                            (_, true) => Align2::CENTER_CENTER,
+                        };
+                        if *vertical {
+                            let u = (*taille as f32 * ppm).max(3.0) * 1.15;
+                            let total = txt.chars().count() as f32 * u;
+                            let (ax, ay) = match *ancre {
+                                "end" => (mm.0, mm.1),
+                                "middle" => (mm.0, mm.1 + total as f64 / (2.0 * ppm as f64)),
+                                _ => (mm.0, mm.1 + total as f64 / ppm as f64),
+                            };
+                            let mut ycur = ay + (total / 2.0) as f64 / ppm as f64;
+                            for ch in txt.chars() {
+                                painter.text(
+                                    px(ax, ycur),
+                                    Align2::CENTER_CENTER,
+                                    ch.to_string(),
+                                    font.clone(),
+                                    colour,
+                                );
+                                if *gras {
+                                    painter.text(
+                                        px(ax + 0.35, ycur),
+                                        Align2::CENTER_CENTER,
+                                        ch.to_string(),
+                                        font.clone(),
+                                        colour,
+                                    );
+                                }
+                                ycur -= (u / ppm) as f64;
+                            }
+                        } else {
+                            painter.text(px(mm.0, mm.1), align, txt, font.clone(), colour);
+                            if *gras {
+                                painter.text(px(mm.0 + 0.35, mm.1), align, txt, font, colour);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        for s in &self.stats {
+            let pieces = s.draw_list(&self.page);
+            dessiner(&pieces);
+        }
+        for b in &self.boites {
+            let pieces = b.draw_list(&self.page);
+            dessiner(&pieces);
         }
     }
 
@@ -1483,6 +2213,7 @@ impl eframe::App for SqApp {
         egui::CentralPanel::default().show(ctx, |ui| self.zone_dessin(ui));
         self.fenetre_tableau(ctx);
         self.fenetre_genere(ctx);
+        self.fenetre_stat(ctx);
         // sauvegarde automatique si nécessaire
         if self.dirty {
             let s = Session {
@@ -1494,6 +2225,8 @@ impl eframe::App for SqApp {
                 tangentes: self.tangentes.clone(),
                 integrales: self.integrales.clone(),
                 tableaux: self.tableaux.clone(),
+                stats: self.stats.clone(),
+                boites: self.boites.clone(),
             };
             if session::save(&s).is_ok() {
                 self.dirty = false;
