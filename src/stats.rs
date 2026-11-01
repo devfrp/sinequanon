@@ -802,8 +802,8 @@ impl Serie1 {
         };
         let ox = p.mm_x(p.origin_x);
         if ox.is_finite() {
-            // première colonne de grille (5 mm) à droite de l'axe
-            let lx = ((ox / PAS_MM).ceil() * PAS_MM).max(0.0);
+            // première colonne de grille (5 mm) strictement à droite de l'axe
+            let lx = ((ox / PAS_MM).floor() + 1.0) * PAS_MM;
             if lx < p.width_mm {
                 out.push(Piece::Rect {
                     mm: (lx, yax + 5.0),
