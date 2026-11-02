@@ -29,6 +29,220 @@ pub const COULEURS_MODALITES: [[u8; 3]; 7] = [
 /// exemples « Répartition des salaires » du manuel.
 pub const LIME: [u8; 3] = [96, 217, 51];
 
+/// Loi de probabilité (module statistiques v0.5) : normale, binomiale,
+/// poisson ou exponentielle. Chaque loi se trace sur son axe (densité
+/// ou fonction de distribution) et se calcule.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Loi {
+    Normal {
+        /// moyenne μ
+        mu: f64,
+        /// écart-type σ (> 0)
+        sigma: f64,
+    },
+    Binomial {
+        /// taille de l'échantillon n
+        n: f64,
+        /// probabilité p (0 < p < 1)
+        p: f64,
+    },
+    Poisson {
+        /// paramètre λ (= moyenne)
+        mu: f64,
+    },
+    Exponentielle {
+        /// paramètre λ (> 0)
+        lambda: f64,
+    },
+}
+
+impl Loi {
+    /// Nom court de la loi (pour les légendes et le panneau Calculs).
+    pub fn nom(&self) -> &'static str {
+        match self {
+            Loi::Normal { .. } => "Loi normale",
+            Loi::Binomial { .. } => "Loi binomiale",
+            Loi::Poisson { .. } => "Loi de Poisson",
+            Loi::Exponentielle { .. } => "Loi exponentielle",
+        }
+    }
+
+    /// Description complète pour les légendes (ex. « Loi normale : μ = 100,5 ; σ = 12 »).
+    pub fn description(&self) -> String {
+        let (mu, sigma) = match self {
+            Loi::Normal { mu, sigma } => (*mu, *sigma),
+            Loi::Binomial { n, p } => (*n * *p, 1.0 - *p),
+            Loi::Poisson { mu } => (*mu, *mu),
+            Loi::Exponentielle { lambda } => (*lambda, *lambda),
+        };
+        format!("{} : μ = {}, σ = {}", self.nom(), num(mu), num(sigma))
+    }
+
+    /// Plage d'intérêt (abscisses, densité normalisée au pic) pour le tracé.
+    fn plage(&self) -> (f64, f64, f64) {
+        match self {
+            Loi::Normal { mu, sigma } => {
+                if *sigma <= 0.0 {
+                    return (0.0, 1.0, 1.0);
+                }
+                let s = *sigma;
+                (
+                    *mu - 3.0 * s,
+                    *mu + 3.0 * s,
+                    1.0 / (s * (2.0 * std::f64::consts::PI).sqrt()),
+                )
+            }
+            Loi::Binomial { n, p } => {
+                if *n < 0.0 || !(0.0..=1.0).contains(p) {
+                    return (0.0, 1.0, 1.0);
+                }
+                let n_i = *n as i64;
+                let p = *p;
+                if n_i <= 0 {
+                    return (0.0, 1.0, 0.0);
+                }
+                // mode de la loi binomiale
+                let k = ((n_i + 1) as f64 * p) as i64;
+                let k = k.clamp(0, n_i);
+                let pdf = |kk: i64| -> f64 {
+                    let mut comb: f64 = 1.0;
+                    for i in 1..=kk {
+                        comb *= (n_i - kk + i) as f64 / i as f64;
+                    }
+                    comb * p.powi(kk as i32) * (1.0 - p).powi((n_i - kk) as i32)
+                };
+                let ymax = pdf(k);
+                (0.0, n_i as f64, ymax)
+            }
+            Loi::Poisson { mu } => {
+                let m = mu.max(0.0);
+                let hi = (m * 5.0).max(10.0);
+                let mode = m.round() as i64;
+                let pdf = |kk: f64| -> f64 {
+                    let k = kk.floor().max(0.0) as i64;
+                    let mut fact = 1.0f64;
+                    for i in 2..=k.max(1) {
+                        fact *= i as f64;
+                    }
+                    m.powi(k as i32) * (-m).exp() / fact
+                };
+                (0.0, hi, pdf(mode as f64))
+            }
+            Loi::Exponentielle { lambda } => {
+                if *lambda <= 0.0 {
+                    return (0.0, 1.0, 1.0);
+                }
+                (0.0, 10.0 / lambda, *lambda)
+            }
+        }
+    }
+
+    /// Densité de probabilité (pdf).
+    pub fn pdf(&self, x: f64) -> f64 {
+        match self {
+            Loi::Normal { mu, sigma } => {
+                let z = (x - mu) / sigma;
+                (-z * z / 2.0).exp() / (sigma * (2.0 * std::f64::consts::PI).sqrt())
+            }
+            Loi::Binomial { n, p } => {
+                if *n < 0.0 || !(0.0..=1.0).contains(p) {
+                    return 0.0;
+                }
+                let n_i = n.floor() as i64;
+                let k_i = (x.floor().max(0.0)).min(n_i.max(0) as f64) as i64;
+                let k_i = k_i.min(n_i);
+                if k_i < 0 {
+                    return 0.0;
+                }
+                // C(n, k) = Π_{i=1..k} (n−k+i) / i
+                let mut comb: f64 = 1.0;
+                for i in 1..=k_i {
+                    comb *= (n_i - k_i + i) as f64 / i as f64;
+                }
+                comb * p.powi(k_i as i32) * (1.0 - p).powi((n_i - k_i) as i32)
+            }
+            Loi::Poisson { mu } => {
+                let m = mu.max(0.0);
+                let k = x.floor().max(0.0) as i64;
+                let mut fact = 1.0f64;
+                for i in 2..=k.max(1) {
+                    fact *= i as f64;
+                }
+                m.powi(k as i32) * (-m).exp() / fact
+            }
+            Loi::Exponentielle { lambda } => {
+                if *lambda > 0.0 {
+                    lambda * (-lambda * x).exp()
+                } else {
+                    0.0
+                }
+            }
+        }
+    }
+
+    /// Fonction de distribution (cdf). Loi de probabilité (module
+    /// statistiques v0.5) : disponible pour les calculs de probabilité
+    /// (P(X ≤ x)) avant l'arrivée du module complet.
+    #[allow(dead_code)]
+    pub fn cdf(&self, x: f64) -> f64 {
+        match self {
+            Loi::Normal { mu, sigma } => {
+                if *sigma <= 0.0 {
+                    return 0.5;
+                }
+                phi((x - mu) / sigma)
+            }
+            Loi::Binomial { n, p } => {
+                if *n < 0.0 || !(0.0..=1.0).contains(p) {
+                    return 0.0;
+                }
+                let n_i = n.max(0.0) as i64;
+                let mut cum = 0.0;
+                for k in 0..=n_i {
+                    cum += self.pdf(k as f64);
+                    if (k as f64) >= x {
+                        return cum;
+                    }
+                }
+                1.0
+            }
+            Loi::Poisson { mu } => {
+                let m = mu.max(0.0);
+                let mut cum = 0.0;
+                let mut term = (-m).exp();
+                let mut k = 0.0;
+                loop {
+                    cum += term;
+                    if k >= x {
+                        return cum;
+                    }
+                    term *= m / (k + 1.0);
+                    k += 1.0;
+                    if k > 1e7 {
+                        return 1.0;
+                    }
+                }
+            }
+            Loi::Exponentielle { lambda } => {
+                if *lambda <= 0.0 {
+                    return 1.0;
+                }
+                if x < 0.0 {
+                    return 0.0;
+                }
+                1.0 - (-lambda * x).exp()
+            }
+        }
+    }
+
+    /// Probabilité « point » : P(X = k) (lois discrètes) ; pour la loi
+    /// exponentielle / normale on renvoie la densité (évaluation
+    /// locale).
+    pub fn probabilite(&self, k: f64) -> f64 {
+        self.pdf(k)
+    }
+}
+
 /// Style du graphique, correspondant aux choix de la boîte de saisie.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Style {
@@ -46,6 +260,9 @@ pub enum Style {
     FreqCumul,
     /// classes : droite de Henry
     DroiteHenry,
+    /// loi de probabilité (module statistiques v0.5) : densité tracée
+    /// sur l'axe des valeurs
+    LoiProba,
 }
 
 /// Une modalité du volet « variable non numérique ».
@@ -125,6 +342,10 @@ pub struct Serie1 {
     pub decroissantes: bool,
     #[serde(default = "def_visualiser")]
     pub visualiser: Visualiser,
+    /// loi de probabilité à tracer (module statistiques v0.5) ; si
+    /// `None`, la loi normale est ajustée sur les données.
+    #[serde(default)]
+    pub loi: Option<Loi>,
 }
 
 fn oui() -> bool {
@@ -151,6 +372,7 @@ impl Default for Serie1 {
             croissantes: true,
             decroissantes: false,
             visualiser: Visualiser::MedianeEtQuartiles,
+            loi: None,
         }
     }
 }
@@ -607,6 +829,7 @@ impl Serie1 {
             Style::BoiteAvecDeciles => self.dessin_boite(page, true),
             Style::FreqCumul => self.dessin_cumulees(page),
             Style::DroiteHenry => self.dessin_henry(page),
+            Style::LoiProba => self.dessin_loi(page),
         }
     }
 
@@ -1262,6 +1485,63 @@ impl Serie1 {
         }
         out
     }
+
+    /// Loi de probabilité (module statistiques v0.5) : la densité
+    /// `f(x)` de la loi (par défaut la normale ajustée sur les données,
+    /// comme la droite de Henry) est tracée sur l'axe des valeurs, avec
+    /// une échelle de densité normalisée au pic.
+    fn dessin_loi(&self, p: &Page) -> Vec<Piece> {
+        let Some(pr) = self.parametres() else {
+            return Vec::new();
+        };
+        let loi = self.loi.unwrap_or(Loi::Normal {
+            mu: pr.moyenne,
+            sigma: pr.sigma.max(0.5),
+        });
+        let (xlo, xhi, ymax) = loi.plage();
+        if !xlo.is_finite() || !xhi.is_finite() || xlo > xhi || ymax <= 0.0 {
+            return Vec::new();
+        }
+        // on borne la plage à l'axe visible de la page
+        let (xlo, xhi) = (xlo.max(0.0).min(p.width_mm), xhi.max(0.0).min(p.width_mm));
+        if xhi <= xlo {
+            return Vec::new();
+        }
+        let mut out = pieces_axes(p, true, true, true);
+        if let Some(t) = self.texte_titre(p) {
+            out.push(t);
+        }
+        // courbe : échantillonnage de la densité, normalisée au pic
+        let n = 240;
+        let mut pts: Vec<(f64, f64)> = Vec::new();
+        for i in 0..=n {
+            let x = xlo + (xhi - xlo) * i as f64 / n as f64;
+            let f = loi.pdf(x);
+            if !f.is_finite() || f <= 0.0 {
+                continue;
+            }
+            pts.push((p.mm_x(x), p.mm_y(f / ymax)));
+        }
+        if pts.len() >= 2 {
+            out.push(Piece::Poly {
+                pts,
+                fill: None,
+                stroke: Some((NOIR, 0.7)),
+            });
+        }
+        let caption = loi.description();
+        out.push(Piece::Texte {
+            mm: (p.width_mm / 2.0, p.height_mm - 4.6),
+            txt: caption,
+            c: NOIR,
+            taille: 2.4,
+            ancre: "middle",
+            vertical: false,
+            gras: false,
+            italique: false,
+        });
+        out
+    }
 }
 
 /// La série « Boîtes à moustaches multiples » (4e volet de la boîte de
@@ -1505,17 +1785,25 @@ fn phi(z: f64) -> f64 {
     0.5 * (1.0 + erf(z / std::f64::consts::SQRT_2))
 }
 
-/// erf (Abramowitz-Stegun 7.1.26).
+/// erf (série de Taylor : erf(x) = (2/√π) Σ(−1)^n x^(2n+1) / (n! (2n+1))).
 fn erf(x: f64) -> f64 {
     let s = if x < 0.0 { -1.0 } else { 1.0 };
-    let x = x.abs();
-    let t = 1.0 / (1.0 + 0.3275911 * x);
-    let y = 1.0
-        - ((((0.254829592 * t - 0.284496736) * t + 1.421413741) * t - 1.453152027) * t
-            + 1.061405429)
-            * t
-            * (-x * x).exp();
-    s * y
+    let ax = x.abs();
+    let mut sum = 0.0;
+    let mut term_pow = ax;
+    let mut n_fact = 1.0;
+    let mut n: i32 = 0;
+    loop {
+        let term = (2.0 / std::f64::consts::PI.sqrt()) * term_pow / (n_fact * (2 * n + 1) as f64);
+        sum += if n % 2 == 0 { term } else { -term };
+        if n > 0 && term.abs() < 1e-17 {
+            break;
+        }
+        n += 1;
+        term_pow *= ax * ax;
+        n_fact *= n as f64;
+    }
+    s * sum
 }
 
 impl Default for BoitesMultiples {
@@ -1694,6 +1982,75 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v["canaux"], 1.0);
         assert_eq!(v["avec_pct"], true);
+    }
+
+    #[test]
+    fn loi_normale_cdf_sensible() {
+        let loi = Loi::Normal {
+            mu: 0.0,
+            sigma: 1.0,
+        };
+        assert!((loi.cdf(0.0) - 0.5).abs() < 1e-9);
+        assert!((loi.cdf(1.96) - 0.975).abs() < 5e-3, "{}", loi.cdf(1.96));
+        assert!((loi.cdf(-1.96) - 0.025).abs() < 5e-3);
+        assert!((loi.cdf(6.0) - 0.9999999998).abs() < 1e-6);
+        // densité : pic = 1/(σ√(2π))
+        assert!((loi.pdf(0.0) - 1.0 / (2.0 * std::f64::consts::PI).sqrt()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn loi_binomiale_somme_une() {
+        let loi = Loi::Binomial { n: 10.0, p: 0.3 };
+        let mut s = 0.0;
+        for k in 0..=10 {
+            s += loi.pdf(k as f64);
+        }
+        assert!((s - 1.0).abs() < 1e-9, "{s}");
+        assert!((loi.cdf(10.0) - 1.0).abs() < 1e-9);
+        assert!((loi.cdf(2.0) - loi.cdf(1.0) - loi.pdf(2.0)).abs() < 1e-9);
+        // P(X = 2) = C(10,2) 0,3² 0,7⁸
+        let mut comb: f64 = 1.0;
+        for i in 1..=2 {
+            comb *= (10.0 - 2.0 + i as f64) / i as f64;
+        }
+        let attendu = comb * 0.09 * 0.7f64.powi(8);
+        assert!((loi.pdf(2.0) - attendu).abs() < 1e-12);
+    }
+
+    #[test]
+    fn loi_poisson_pdf_sensible() {
+        let loi = Loi::Poisson { mu: 3.4 };
+        let mut s = 0.0;
+        for k in 0..=30 {
+            s += loi.pdf(k as f64);
+        }
+        assert!((s - 1.0).abs() < 5e-3, "{s}");
+        assert!((loi.cdf(30.0) - 1.0).abs() < 5e-3);
+        assert!(loi.cdf(0.0) < 0.05);
+    }
+
+    #[test]
+    fn loi_exponentielle_cdf() {
+        let loi = Loi::Exponentielle { lambda: 1.5 };
+        assert!(loi.cdf(0.0) < 1e-12);
+        assert!((loi.cdf(10.0) - (1.0 - (-15.0f64).exp())).abs() < 1e-9);
+        assert!((loi.probabilite(0.0) - 1.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn serie_loi_proba_dessine_une_courbe() {
+        let s = Serie1 {
+            titre: "loi".into(),
+            donnees: Donnees::Isolees(vec![ValEff { v: 1.0, n: 1.0 }]),
+            style: Style::LoiProba,
+            ..Default::default()
+        };
+        let p = Page::default();
+        let pieces = s.draw_list(&p);
+        assert!(!pieces.is_empty());
+        assert!(
+            matches!(pieces[0], Piece::Ligne { .. }) || matches!(pieces[0], Piece::Poly { .. })
+        );
     }
 
     #[test]

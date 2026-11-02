@@ -28,9 +28,22 @@ bâtons, droite de Henry).
 | Interface | fenêtre « Statistiques à une variable » bilingue FR/EN, panneau Calculs (n°, Total) |
 
 **Pas encore inclus** (feuille de route, une release par module) :
-lois de probabilité (binomiale, normale), arbres pondérés, suites,
-extrema/zéros, expressions LaTeX, export BMP/GIF/EMF/EPS, courbes de
-Bézier, impression, préférences globales.
+arbres pondérés, suites, extrema/zéros, expressions LaTeX, export
+BMP/GIF/EMF/EPS, courbes de Bézier, impression, préférences globales.
+
+## État v0.5 — probabilités : lois de probabilité (module v0.5)
+
+Le module **probabilités** est porté : les lois de probabilité (normale,
+binomiale, Poisson, exponentielle) se modélisent par leurs fonctions de
+densité (pdf) et de distribution (cdf), et le style « Loi de probabilité »
+trace la densité sur l'axe des valeurs (loi par défaut : normale ajustée
+sur les données, comme la droite de Henry).
+
+| Inclus | Détail |
+|---|---|
+| Lois | normale (μ, σ), binomiale (n, p), Poisson (λ), exponentielle (λ) — pdf/cdf, P(X = k) |
+| Rendu | courbe de densité normalisée au pic + légende « Loi … : μ = …, σ = … » |
+| Interface | style « Loi de probabilité » (fenêtre Statistiques), panneau Calculs |
 
 ## État v0.3 — tableaux de signes et de variations
 
@@ -160,8 +173,9 @@ git tag v0.2.0 && git push --tags     # build + release automatiques
 - ✅ v0.4 — statistiques (module v0.4) : série à une variable (histogramme en
   classes, polygone des effectifs, boîte à moustaches, diagramme en bâtons,
   droite de Henry) — rendu comparé aux figures du manuel v2.9.4
-- ⬜ probabilités (arbres pondérés, loi binomiale, loi normale)
-- ⬜ probabilités (arbres pondérés, loi binomiale, loi normale)
+- ✅ v0.5 — probabilités (module v0.5) : lois de probabilité (normale,
+  binomiale, Poisson, exponentielle) + visualisation (style « Loi de
+  probabilité »)
 - ⬜ suites numériques (mode escalier)
 - ⬜ extrema et zéros automatiques
 - ⬜ exports BMP/GIF/EMF/EPS/LaTeX, courbes de Bézier, préférences, impression

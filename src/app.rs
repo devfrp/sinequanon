@@ -8,7 +8,7 @@ use crate::grid::Page;
 use crate::i18n::{self, Lang};
 use crate::render::{self, CurvePolys};
 use crate::session::{self, Session};
-use crate::stats::{self, BoitesMultiples, Donnees, Piece as PieceStats, Style, Visualiser};
+use crate::stats::{self, BoitesMultiples, Donnees, Loi, Piece as PieceStats, Style, Visualiser};
 use crate::tableau::{self as tab, Piece, Tableau};
 use eframe::egui::{
     self, Align2, Color32, ComboBox, DragValue, FontId, Pos2, Rect, RichText, Sense, Stroke,
@@ -1292,6 +1292,7 @@ impl SqApp {
                 (Style::Batons, t.st_batons),
                 (Style::Boite, t.st_boite),
                 (Style::BoiteAvecDeciles, t.st_boite_deciles),
+                (Style::LoiProba, t.st_loi),
             ],
             _ => &[
                 (Style::Histogramme, t.st_histogramme),
@@ -1300,6 +1301,7 @@ impl SqApp {
                 (Style::BoiteAvecDeciles, t.st_boite_deciles),
                 (Style::FreqCumul, t.st_cumul),
                 (Style::DroiteHenry, t.st_henry),
+                (Style::LoiProba, t.st_loi),
             ],
         };
         ui.horizontal(|ui| {
@@ -1457,6 +1459,27 @@ impl SqApp {
             }
         }
         ui.separator();
+        // module probabilités (v0.5) : loi de probabilité affichée
+        if s.style == Style::LoiProba {
+            let loi = s.loi.or_else(|| {
+                s.parametres().map(|pr| Loi::Normal {
+                    mu: pr.moyenne,
+                    sigma: pr.sigma.max(0.5),
+                })
+            });
+            if let Some(loi) = loi {
+                ui.strong(t.st_loi);
+                ui.label(loi.nom());
+                ui.label(RichText::new(loi.description()).strong());
+                if let Some(pr) = s.parametres() {
+                    ui.label(format!(
+                        "{} : {}",
+                        t.st_proba,
+                        stats::num(loi.probabilite(pr.moyenne))
+                    ));
+                }
+            }
+        }
         // panneau Calculs, valeurs à la française comme l'original
         if let Some(pr) = s.parametres() {
             ui.strong(t.stat_calculs);
@@ -1519,7 +1542,7 @@ impl SqApp {
             Donnees::Isolees(_) => {
                 if matches!(
                     s.style,
-                    Style::Histogramme | Style::FreqCumul | Style::DroiteHenry
+                    Style::Histogramme | Style::FreqCumul | Style::DroiteHenry | Style::LoiProba
                 ) {
                     s.style = Style::Batons;
                 }

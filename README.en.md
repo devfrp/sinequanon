@@ -27,9 +27,22 @@ rendering tuned against the figures of the original v2.9.4 manual
 | Interface | statistics window (bilingual FR/EN), Calculs panel (n°, total) |
 
 **Not yet included** (roadmap, one release per module) :
-probability laws (binomial, normal), weighted trees, sequences, extrema/
-zeros, LaTeX expressions, BMP/GIF/EMF/EPS exports, Bézier curves, printing,
-preferences.
+weighted trees, sequences, extrema/zeros, LaTeX expressions, BMP/GIF/EMF/EPS
+exports, Bézier curves, printing, preferences.
+
+## v0.5 status — probability: probability laws (module v0.5)
+
+The **probability** module is ported: probability laws (normal, binomial,
+Poisson, exponential) are modelled with their density (pdf) and cumulative
+distribution (cdf) functions, and the "Probability law" style traces the
+density on its own axis (default law: normal fitted on the data, like the
+Henry line).
+
+| Included | Details |
+|---|---|
+| Laws | normal (μ, σ), binomial (n, p), Poisson (λ), exponential (λ) — pdf/cdf, P(X = k) |
+| Rendering | density curve normalized to its peak + legend "Law … : μ = …, σ = …" |
+| Interface | "Probability law" style (statistics window), Calculs panel |
 
 ## v0.3 status — sign and variation tables
 
@@ -47,10 +60,9 @@ preferences.
 | Export | **SVG** (mm, printable 1:1, vector labels and hatching) and **PNG** (hatching, markers, bitmap text) — tables included |
 | Analysis | calculator syntax, implicit multiplication (`2x`, `3sin(x)`), asymptote clipping |
 
-**Not yet included** (roadmap, one module per release): probability
-distributions (binomial, normal), weighted probability trees,
-sequences, extrema/zeros, LaTeX expressions, BMP/GIF/EMF/EPS export,
-Bézier curves, printing, global preferences.
+**Not yet included** (roadmap, one module per release): weighted
+probability trees, sequences, extrema/zeros, LaTeX expressions,
+BMP/GIF/EMF/EPS export, Bézier curves, printing, global preferences.
 
 ## Installation
 
@@ -162,8 +174,8 @@ git tag v0.2.0 && git push --tags     # automatic build + release
 - ✅ v0.4 — statistics (module v0.4): data series at one variable (histogram
   of classes, cumulative frequency polygon, box plot, bar chart, Henry line) —
   rendering compared against the manual's figures
-- ⬜ probability (weighted trees, binomial distribution, normal distribution)
-- ⬜ probability (weighted trees, binomial distribution, normal distribution)
+- ✅ v0.5 — probability (module v0.5): probability laws (normal, binomial,
+  Poisson, exponential) + rendering (style "Probability law")
 - ⬜ numeric sequences (staircase mode)
 - ⬜ automatic extrema and zeros
 - ⬜ BMP/GIF/EMF/EPS/LaTeX exports, Bézier curves, preferences, printing
