@@ -44,6 +44,18 @@ Henry line).
 | Rendering | density curve normalized to its peak + legend "Law … : μ = …, σ = …" |
 | Interface | "Probability law" style (statistics window), Calculs panel |
 
+## v0.6 status — numeric sequences (module v0.6)
+
+The **numeric sequences** module is ported: sequences of the form `u_n = f(n)`
+(staircase) and recurrence-defined sequences `u_{n+1} = f(u_n)` (spider web)
+are modelled through the `n`/`u` variables and traced on the index/value axes.
+
+| Included | Details |
+|---|---|
+| Sequences | `u_n = f(n)` (explicit) and `u_{n+1} = f(u_n)` (recurrence) — terms and staircase |
+| Rendering | staircase / iterations + legend (`u_n = …` / `u_{n+1} = …`) |
+| Interface | statistics window: « ➕ Sequence » button, drawing |
+
 ## v0.3 status — sign and variation tables
 
 | Included | Details |
@@ -176,7 +188,8 @@ git tag v0.2.0 && git push --tags     # automatic build + release
   rendering compared against the manual's figures
 - ✅ v0.5 — probability (module v0.5): probability laws (normal, binomial,
   Poisson, exponential) + rendering (style "Probability law")
-- ⬜ numeric sequences (staircase mode)
+- ✅ v0.6 — numeric sequences (module v0.6): explicit sequences `u_n = f(n)`
+  (staircase) and recurrence sequences `u_{n+1} = f(u_n)` (spider web)
 - ⬜ automatic extrema and zeros
 - ⬜ BMP/GIF/EMF/EPS/LaTeX exports, Bézier curves, preferences, printing
 

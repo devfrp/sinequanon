@@ -45,6 +45,19 @@ sur les données, comme la droite de Henry).
 | Rendu | courbe de densité normalisée au pic + légende « Loi … : μ = …, σ = … » |
 | Interface | style « Loi de probabilité » (fenêtre Statistiques), panneau Calculs |
 
+## État v0.6 — suites numériques (module v0.6)
+
+Le module **suites numériques** est porté : les suites de la forme
+`u_n = f(n)` (escalier) et les suites par récurrence `u_{n+1} = f(u_n)`
+(toile d'araignée) sont modélisées par l'analyseur `n`/`u et tracées sur
+l'axe des abscisses (indice) et des ordonnées.
+
+| Inclus | Détail |
+|---|---|
+| Suites | `u_n = f(n)` (explicite) et `u_{n+1} = f(u_n)` (récurrence) — termes et escalier |
+| Rendu | escalier / itérations + légende (`u_n = …` / `u_{n+1} = …`) |
+| Interface | fenêtre Statistiques : bouton « ➕ Suite », dessin au choix |
+
 ## État v0.3 — tableaux de signes et de variations
 
 | Inclus | Détail |
@@ -176,7 +189,8 @@ git tag v0.2.0 && git push --tags     # build + release automatiques
 - ✅ v0.5 — probabilités (module v0.5) : lois de probabilité (normale,
   binomiale, Poisson, exponentielle) + visualisation (style « Loi de
   probabilité »)
-- ⬜ suites numériques (mode escalier)
+- ✅ v0.6 — suites numériques (module v0.6) : suites explicites `u_n = f(n)`
+  (escalier) et récurrentes `u_{n+1} = f(u_n)` (toile d'araignée)
 - ⬜ extrema et zéros automatiques
 - ⬜ exports BMP/GIF/EMF/EPS/LaTeX, courbes de Bézier, préférences, impression
 

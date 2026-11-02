@@ -51,6 +51,8 @@ pub struct SqApp {
     pub stats: Vec<crate::stats::Serie1>,
     /// boîtes à moustaches multiples (v0.4+)
     pub boites: Vec<crate::stats::BoitesMultiples>,
+    /// suites numériques (v0.6+)
+    pub suites: Vec<crate::stats::Suite>,
     /// fenêtre d'édition ouverte : index de la série statistique
     pub stat_sel: Option<usize>,
     /// volet actif de la fenêtre statistique (0..=3)
@@ -122,6 +124,7 @@ impl SqApp {
             tableaux,
             stats,
             boites,
+            suites: Vec::new(),
             stat_sel: None,
             stat_volet: 0,
             tab_sel: None,
@@ -996,6 +999,7 @@ impl SqApp {
                     &self.tableaux,
                     &self.stats,
                     &self.boites,
+                    &self.suites,
                     &path,
                 ) {
                     Ok(n) => self.set_status(format!("✔ {} écrit ({} octets)", path.display(), n)),
@@ -1014,6 +1018,7 @@ impl SqApp {
                     &self.tableaux,
                     &self.stats,
                     &self.boites,
+                    &self.suites,
                     self.px_per_mm as f64,
                     &path,
                 ) {
@@ -1458,6 +1463,16 @@ impl SqApp {
                 }
             }
         }
+        ui.horizontal(|ui| {
+            if ui.button(t.st_aj_suite).clicked() {
+                self.suites.push(stats::Suite {
+                    titre: format!("Suite {}", self.suites.len() + 1),
+                    def: stats::SuiteDef::Lineaire { f: "2n+1".into() },
+                    dessiner: true,
+                });
+                self.dirty = true;
+            }
+        });
         ui.separator();
         // module probabilités (v0.5) : loi de probabilité affichée
         if s.style == Style::LoiProba {
@@ -1815,6 +1830,10 @@ impl SqApp {
         }
         for b in &self.boites {
             let pieces = b.draw_list(&self.page);
+            dessiner(&pieces);
+        }
+        for s in &self.suites {
+            let pieces = s.draw_list(&self.page);
             dessiner(&pieces);
         }
     }
@@ -2250,6 +2269,7 @@ impl eframe::App for SqApp {
                 tableaux: self.tableaux.clone(),
                 stats: self.stats.clone(),
                 boites: self.boites.clone(),
+                suites: self.suites.clone(),
             };
             if session::save(&s).is_ok() {
                 self.dirty = false;

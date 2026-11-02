@@ -1833,6 +1833,130 @@ pub struct BoiteMultiple {
     pub couleur: [u8; 3],
 }
 
+// ---------------------------------------------------------------- suites
+
+/// Nombre maximal de termes d'une suite tracée.
+pub const NB_TERME: usize = 24;
+
+/// Définition d'une suite numérique (module statistiques v0.6) :
+/// `u_n = f(n)` (suite explicite) ou `u_{n+1} = f(u_n)` (suite par
+/// récurrence).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SuiteDef {
+    /// suite explicite : u_n = f(n)
+    Lineaire { f: String },
+    /// suite par récurrence : u_{n+1} = f(u_n)
+    Recurrence { f: String },
+}
+
+impl SuiteDef {
+    /// Évalue `f` (variable `var`) en `v`.
+    fn eval_f(f: &str, var: &str, v: f64) -> Option<f64> {
+        let ast = crate::expr::parse(f).ok()?;
+        ast.validate_vars(&[var]).ok()?;
+        let mut vars = crate::expr::VarSet::default();
+        if var == "n" {
+            vars.n = Some(v);
+        } else {
+            vars.u = Some(v);
+        }
+        Some(ast.eval(&vars, &mut Vec::new()))
+    }
+
+    /// u_n d'une suite explicite (`u_n = f(n)`).
+    pub fn valeur(&self, n: f64) -> Option<f64> {
+        match self {
+            SuiteDef::Lineaire { f } => Self::eval_f(f, "n", n),
+            SuiteDef::Recurrence { .. } => None,
+        }
+    }
+
+    /// Termes de la suite : pour `Lineaire` les u_n (n = 0..) ; pour
+    /// `Recurrence` les itérations successives depuis u_0 = 0.
+    pub fn termes(&self, n: usize) -> Vec<f64> {
+        let mut out = Vec::with_capacity(n);
+        match self {
+            SuiteDef::Lineaire { .. } => {
+                for k in 0..n {
+                    out.push(self.valeur(k as f64).unwrap_or(f64::NAN));
+                }
+            }
+            SuiteDef::Recurrence { f } => {
+                let mut u = 0.0f64;
+                for _ in 0..n {
+                    out.push(u);
+                    u = Self::eval_f(f, "u", u).unwrap_or(f64::NAN);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Une suite numérique (module statistiques v0.6).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Suite {
+    pub titre: String,
+    pub def: SuiteDef,
+    pub dessiner: bool,
+}
+
+impl Suite {
+    /// Dessin : escalier (u_n = f(n)) ou toile d'araignée (itérations de
+    /// la récurrence), avec légende.
+    pub fn draw_list(&self, p: &Page) -> Vec<Piece> {
+        if !self.dessiner || !p.mm_x(0.0).is_finite() || !p.mm_y(0.0).is_finite() {
+            return Vec::new();
+        }
+        let termes = self.def.termes(NB_TERME);
+        if termes.iter().any(|v| v.is_nan()) {
+            // expression invalide : rien à tracer
+            return Vec::new();
+        }
+        let (f, recurrence) = match &self.def {
+            SuiteDef::Lineaire { f } => (f.clone(), false),
+            SuiteDef::Recurrence { f } => (f.clone(), true),
+        };
+        let mut out = Vec::new();
+        for i in 0..termes.len().saturating_sub(1) {
+            let (x0, y0) = (p.mm_x(i as f64), p.mm_y(termes[i]));
+            let (x1, y1) = (p.mm_x((i + 1) as f64), p.mm_y(termes[i + 1]));
+            out.push(Piece::Ligne {
+                x0,
+                y0,
+                x1,
+                y1,
+                c: NOIR,
+                w: 0.7,
+            });
+            out.push(Piece::Ligne {
+                x0: x1,
+                y0,
+                x1,
+                y1,
+                c: NOIR,
+                w: 0.7,
+            });
+        }
+        let caption = if recurrence {
+            format!("u_{{n+1}} = {f}")
+        } else {
+            format!("u_n = {f}")
+        };
+        out.push(Piece::Texte {
+            mm: (p.width_mm / 2.0, p.height_mm - 4.6),
+            txt: caption,
+            c: NOIR,
+            taille: 2.4,
+            ancre: "middle",
+            vertical: false,
+            gras: false,
+            italique: false,
+        });
+        out
+    }
+}
+
 // ---------------------------------------------------------------- exemples
 
 /// Exemple de l'original : valeurs isolées (les nombres du panneau
@@ -2051,6 +2175,57 @@ mod tests {
         assert!(
             matches!(pieces[0], Piece::Ligne { .. }) || matches!(pieces[0], Piece::Poly { .. })
         );
+    }
+
+    #[test]
+    fn suite_lineaire_termes() {
+        let d = SuiteDef::Lineaire { f: "2n+1".into() };
+        assert_eq!(d.valeur(3.0), Some(7.0));
+        let termes = d.termes(5);
+        assert_eq!(termes.len(), 5);
+        assert_eq!(termes[0], 1.0);
+        assert_eq!(termes[4], 9.0);
+    }
+
+    #[test]
+    fn suite_recurrente_termes() {
+        let d = SuiteDef::Recurrence { f: "u+1".into() };
+        let termes = d.termes(5);
+        assert_eq!(termes.len(), 5);
+        assert_eq!(termes[0], 0.0);
+        assert_eq!(termes[4], 4.0);
+    }
+
+    #[test]
+    fn suite_invalide_dessine_vide() {
+        let s = Suite {
+            titre: "S".into(),
+            def: SuiteDef::Lineaire { f: "2++".into() },
+            dessiner: true,
+        };
+        assert!(s.draw_list(&Page::default()).is_empty());
+    }
+
+    #[test]
+    fn suite_dessine_escalier() {
+        let s = Suite {
+            titre: "Suite 1".into(),
+            def: SuiteDef::Lineaire { f: "2n+1".into() },
+            dessiner: true,
+        };
+        let pieces = s.draw_list(&Page::default());
+        assert!(!pieces.is_empty());
+        assert!(pieces.iter().any(|p| matches!(p, Piece::Ligne { .. })));
+    }
+
+    #[test]
+    fn suite_dessiner_fausse_vide() {
+        let s = Suite {
+            titre: "S".into(),
+            def: SuiteDef::Lineaire { f: "2n+1".into() },
+            dessiner: false,
+        };
+        assert!(s.draw_list(&Page::default()).is_empty());
     }
 
     #[test]

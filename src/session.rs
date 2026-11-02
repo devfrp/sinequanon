@@ -33,6 +33,9 @@ pub struct Session {
     /// boîtes à moustaches multiples (v0.4+)
     #[serde(default)]
     pub boites: Vec<crate::stats::BoitesMultiples>,
+    /// suites numériques (v0.6+)
+    #[serde(default)]
+    pub suites: Vec<crate::stats::Suite>,
 }
 
 /// Chemin du fichier de session selon la plateforme.
@@ -90,6 +93,7 @@ mod tests {
             tableaux: vec![crate::tableau::parse("[:x:]||[-\\infty:/:>:2]").unwrap()],
             stats: vec![crate::stats::exemple_enfants()],
             boites: vec![],
+            suites: vec![],
         };
         let txt = serde_json::to_string(&s).unwrap();
         let back: Session = serde_json::from_str(&txt).unwrap();

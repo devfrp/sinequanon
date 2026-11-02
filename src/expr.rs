@@ -26,6 +26,10 @@ pub struct VarSet {
     pub x: Option<f64>,
     pub t: Option<f64>,
     pub theta: Option<f64>,
+    /// indice de la suite (u_n = f(n))
+    pub n: Option<f64>,
+    /// valeur courant de la suite (u_{n+1} = f(u_n))
+    pub u: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -274,6 +278,8 @@ fn lookup(name: &str, vars: &VarSet) -> Option<f64> {
         "x" => vars.x,
         "t" => vars.t,
         "theta" => vars.theta,
+        "n" => vars.n,
+        "u" => vars.u,
         "pi" => Some(PI),
         "e" => Some(E),
         _ => None,
@@ -442,6 +448,36 @@ mod tests {
         assert!((ev("abs(-3)", 0.0) - 3.0).abs() < 1e-12);
         assert!((ev("max(2,5)", 0.0) - 5.0).abs() < 1e-12);
         assert!((ev("mod(7,3)", 0.0) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn variables_n_et_u() {
+        let ev_n = |src: &str, n: f64| -> f64 {
+            parse(src).unwrap().eval(
+                &VarSet {
+                    n: Some(n),
+                    ..Default::default()
+                },
+                &mut Vec::new(),
+            )
+        };
+        assert!((ev_n("2*n+1", 3.0) - 7.0).abs() < 1e-12);
+        assert!((ev_n("n^2", 5.0) - 25.0).abs() < 1e-12);
+        assert!((ev_n("3+n*2", 4.0) - 11.0).abs() < 1e-12);
+        // « x » n'est pas une variable de suite
+        assert!(ev_n("x*2", 3.0).is_nan());
+        let ev_u = |src: &str, u: f64| -> f64 {
+            parse(src).unwrap().eval(
+                &VarSet {
+                    u: Some(u),
+                    ..Default::default()
+                },
+                &mut Vec::new(),
+            )
+        };
+        assert!((ev_u("2*u+1", 2.0) - 5.0).abs() < 1e-12);
+        assert!((ev_u("u^2-u+1", 3.0) - 7.0).abs() < 1e-12);
+        assert!(parse("foo(n)").unwrap().validate_vars(&["n"]).is_err());
     }
 
     #[test]
