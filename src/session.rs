@@ -36,6 +36,9 @@ pub struct Session {
     /// suites numériques (v0.6+)
     #[serde(default)]
     pub suites: Vec<crate::stats::Suite>,
+    /// séries statistiques à 2 variables (v0.8+)
+    #[serde(default)]
+    pub serie2: Vec<crate::stats::Serie2>,
 }
 
 /// Chemin du fichier de session selon la plateforme.
@@ -94,6 +97,7 @@ mod tests {
             stats: vec![crate::stats::exemple_enfants()],
             boites: vec![],
             suites: vec![],
+            serie2: vec![],
         };
         let txt = serde_json::to_string(&s).unwrap();
         let back: Session = serde_json::from_str(&txt).unwrap();

@@ -45,6 +45,21 @@ sur les données, comme la droite de Henry).
 | Rendu | courbe de densité normalisée au pic + légende « Loi … : μ = …, σ = … » |
 | Interface | style « Loi de probabilité » (fenêtre Statistiques), panneau Calculs |
 
+## État v0.8 — statistiques à 2 variables (module v0.8)
+
+Le module nuage de points / régressions (manuel p. 52–54) est porté :
+table des couples (xᵢ, yᵢ, nᵢ), 8 natures d'ajustement, rôle des
+variables et calculs (covariance, corrélation, corrélation corrigée).
+
+| Inclus | Détail |
+|---|---|
+| Données | couples pondérés (xᵢ, yᵢ, nᵢ — effectif 1 par défaut) |
+| Régressions | linéaire, logarithmique, exponentielle, puissance, Mayer (k préréglable), polynômes degré 2–4, « aucune courbe » |
+| Variable | rôles y = f(x) / x = f(y) |
+| Calculs | moments pondérés (x̄, ȳ, σx, σy), covariance, r linéaire, r corrigé selon la nature |
+| Rendu | nuage (disques rouges, repère de la page) + courbe colorée + équation à la française en légende |
+| Interface | section « Séries 2 var. » du panneau latéral + éditeur complet |
+
 ## État v0.7 — suites numériques à parité complète (module v0.7)
 
 Le module **suites numériques** complète la parité avec l'original
@@ -196,6 +211,9 @@ git tag v0.2.0 && git push --tags     # build + release automatiques
   (escalier) et récurrentes `u_{n+1} = f(u_n)` (toile d'araignée)
 - ✅ v0.7 — suites v2 : parité complète (variable `x`, premier indice n₀,
   premier terme u₀, vraie toile d'araignée dans le repère, éditeur GUI)
+- ✅ v0.8 — statistiques à 2 variables (module v0.8) : nuage de points,
+  8 régressions (moindres carrés pondérés, Mayer, polynômes *), rôles y/x,
+  covariance, corrélation + corrélation corrigée
 - ⬜ extrema et zéros automatiques
 - ⬜ exports BMP/GIF/EMF/EPS/LaTeX, courbes de Bézier, préférences, impression
 

@@ -44,6 +44,21 @@ Henry line).
 | Rendering | density curve normalized to its peak + legend "Law … : μ = …, σ = …" |
 | Interface | "Probability law" style (statistics window), Calculs panel |
 
+## v0.8 status — 2-variable statistics (module v0.8)
+
+The scatter plot / regression module (manual p. 52–54) is ported: the
+couple table (xᵢ, yᵢ, nᵢ), 8 regression kinds, variable roles and the
+Calculs panel (covariance, correlation, corrected correlation).
+
+| Included | Details |
+|---|---|
+| Data | weighted couples (xᵢ, yᵢ, nᵢ — count 1 by default) |
+| Regressions | linear, logarithmic, exponential, power, Mayer (adjustable k), degree-2–4 polynomials, « no curve » |
+| Variable | roles y = f(x) / x = f(y) |
+| Calculus | weighted moments (x̄, ȳ, σx, σy), covariance, linear r, corrected r per nature |
+| Rendering | scatter (red disks, page coordinate system) + coloured curve + French-formatted equation caption |
+| Interface | « 2-var. series » side-panel section + full editor |
+
 ## v0.7 status — numeric sequences, full parity (module v0.7)
 
 The **numeric sequences** module reaches parity with the original (manual
@@ -195,6 +210,9 @@ git tag v0.2.0 && git push --tags     # automatic build + release
   (staircase) and recurrence sequences `u_{n+1} = f(u_n)` (spider web)
 - ✅ v0.7 — sequences v2: full parity (variable `x`, first index n₀,
   first term u₀, true spider web in the coordinate system, GUI editor)
+- ✅ v0.8 — 2-variable statistics (module v0.8): scatter plots, 8 regressions
+  (weighted least squares, Mayer, polynomials *), y/x roles, covariance,
+  correlation + corrected correlation
 - ⬜ automatic extrema and zeros
 - ⬜ BMP/GIF/EMF/EPS/LaTeX exports, Bézier curves, preferences, printing
 

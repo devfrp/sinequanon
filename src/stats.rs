@@ -2076,6 +2076,570 @@ impl Suite {
     }
 }
 
+// ---------------------------------------------------- statistiques 2 var
+
+/// Nature de la régression d'une série à 2 variables (module v0.8,
+/// manuel p. 52–54).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Reg {
+    /// « aucune courbe » : nuage de points seul
+    #[default]
+    Aucune,
+    /// droite des moindres carrés : y = a x + b
+    Lineaire,
+    /// y = a ln x + b (n'est possible que pour x > 0)
+    Logarithmique,
+    /// y = a b^x (n'est possible que pour y > 0)
+    Exponentielle,
+    /// y = a x^b (x et y tous deux positifs)
+    Puissance,
+    /// droite par les 2 points moyens des sous-nuages (Mayer)
+    Mayer,
+    /// polynôme de degré 2 (au moins 3 points)
+    Poly2,
+    /// polynôme de degré 3 (au moins 4 points)
+    Poly3,
+    /// polynôme de degré 4 (au moins 5 points)
+    Poly4,
+}
+
+/// Rôle des variables : « y en fonction de x » ou « x en fonction de y »
+/// (manuel : un clic refait tous les calculs avec les rôles permutés).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Role {
+    /// y = f(x) (par défaut)
+    #[default]
+    YenX,
+    /// x = f(y)
+    XenY,
+}
+
+/// Un couple (xᵢ, yᵢ) et son effectif nᵢ (1 par défaut, manuel p. 52).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Couple {
+    pub x: f64,
+    pub y: f64,
+    pub n: f64,
+}
+
+/// Une série statistique à 2 variables : nuage de points + courbe de
+/// régression.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Serie2 {
+    pub titre: String,
+    #[serde(default)]
+    pub points: Vec<Couple>,
+    #[serde(default)]
+    pub reg: Reg,
+    /// régression de Mayer : nombre de points du premier sous-nuage
+    #[serde(default = "un_i")]
+    pub mayer_k: usize,
+    #[serde(default)]
+    pub role: Role,
+    pub dessiner: bool,
+    #[serde(default = "def_couleur_points")]
+    pub couleur_points: [u8; 3],
+    #[serde(default = "def_couleur_courbe")]
+    pub couleur_courbe: [u8; 3],
+    /// équation de la courbe de régression affichée sous le dessin
+    #[serde(default = "oui")]
+    pub aff_equation: bool,
+}
+
+fn un_i() -> usize {
+    1
+}
+fn def_couleur_points() -> [u8; 3] {
+    [204, 0, 0] // ROUGE
+}
+fn def_couleur_courbe() -> [u8; 3] {
+    [0, 0, 204] // BLEU
+}
+
+impl Default for Serie2 {
+    fn default() -> Self {
+        Serie2 {
+            titre: String::new(),
+            points: Vec::new(),
+            reg: Reg::Lineaire,
+            mayer_k: 1,
+            role: Role::YenX,
+            dessiner: true,
+            couleur_points: [204, 0, 0],
+            couleur_courbe: [0, 0, 204],
+            aff_equation: true,
+        }
+    }
+}
+
+/// Moments pondérés du nuage (panneau « Calculs », manuel p. 54).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Params2 {
+    /// Σ effectifs
+    pub n: f64,
+    /// point moyen G (moyenne de x, moyenne de y)
+    pub mx: f64,
+    pub my: f64,
+    /// σ de x et de y
+    pub sx: f64,
+    pub sy: f64,
+    /// covariance
+    pub cov: f64,
+}
+
+/// Courbe de régression ajustée (v0.8, manuel p. 52–53).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Ajustement {
+    /// y = a x + b (ou x = a y + b selon le rôle)
+    Affine { a: f64, b: f64 },
+    /// y = a ln x + b
+    Logarithmique { a: f64, b: f64 },
+    /// y = a b^x
+    Exponentielle { a: f64, b: f64 },
+    /// y = a x^b
+    Puissance { a: f64, b: f64 },
+    /// polynôme, coefficients décroissants (p₀ + p₁ x + …)
+    Polynome { coef: Vec<f64> },
+}
+
+impl Ajustement {
+    /// Valeur de la courbe de régression en `x`.
+    pub fn valeur(&self, x: f64) -> f64 {
+        match self {
+            Ajustement::Affine { a, b } => a * x + b,
+            Ajustement::Logarithmique { a, b } => a * x.ln() + b,
+            Ajustement::Exponentielle { a, b } => a * b.powf(x),
+            Ajustement::Puissance { a, b } => a * x.powf(*b),
+            Ajustement::Polynome { coef } => {
+                let mut v = 0.0;
+                for &c in coef {
+                    v = v * x + c;
+                }
+                v
+            }
+        }
+    }
+
+    /// Équation de la courbe, à la française (virgule décimale).
+    pub fn equation(&self) -> String {
+        let fmt = |v: f64| num_axe(v);
+        match self {
+            Ajustement::Affine { a, b } => {
+                format!("y = {} x + {}", fmt(*a), fmt(*b))
+            }
+            Ajustement::Logarithmique { a, b } => {
+                format!("y = {} ln(x) + {}", fmt(*a), fmt(*b))
+            }
+            Ajustement::Exponentielle { a, b } => {
+                format!("y = {} {}^x", fmt(*a), fmt(*b))
+            }
+            Ajustement::Puissance { a, b } => format!("y = {} x^{}", fmt(*a), fmt(*b)),
+            Ajustement::Polynome { coef } => {
+                let mut s = String::from("y =");
+                let d = coef.len() - 1;
+                for (i, c) in coef.iter().rev().enumerate() {
+                    if *c == 0.0 && d > 0 {
+                        continue;
+                    }
+                    let puiss = d - i;
+                    let terme = match puiss {
+                        0 => fmt(*c),
+                        1 => {
+                            if (*c + 1.0).abs() < 1e-9 {
+                                String::from("x")
+                            } else {
+                                format!("{} x", fmt(*c))
+                            }
+                        }
+                        n => {
+                            if (*c + 1.0).abs() < 1e-9 {
+                                format!("x^{n}")
+                            } else {
+                                format!("{} x^{n}", fmt(*c))
+                            }
+                        }
+                    };
+                    if s.ends_with('=') {
+                        s.push_str(&format!(" {terme}"));
+                    } else if *c < 0.0 {
+                        s.push_str(&format!(" - {}", terme.trim_start_matches('-')));
+                    } else {
+                        s.push_str(&format!(" + {terme}"));
+                    }
+                }
+                s
+            }
+        }
+    }
+}
+
+/// Résolution d'un système linéaire carré m×m (Gauss, pivot partiel).
+fn gauss(m: usize, a: &mut [f64], b: &mut [f64]) -> Option<Vec<f64>> {
+    for col in 0..m {
+        // pivot max
+        let (mut piv, mut il) = (a[col * m + col].abs(), col);
+        for i in col + 1..m {
+            let val = a[i * m + col].abs();
+            if val > piv {
+                (piv, il) = (val, i);
+            }
+        }
+        if piv < 1e-12 {
+            return None;
+        }
+        if il != col {
+            for j in col..m {
+                a.swap(col * m + j, il * m + j);
+            }
+            b.swap(col, il);
+        }
+        for i in col + 1..m {
+            let f = a[i * m + col] / a[col * m + col];
+            if f != 0.0 {
+                for j in col..m {
+                    a[i * m + j] -= f * a[col * m + j];
+                }
+                b[i] -= f * b[col];
+            }
+        }
+    }
+    let mut x = vec![0.0f64; m];
+    for i in (0..m).rev() {
+        let mut s = b[i];
+        for j in i + 1..m {
+            s -= a[i * m + j] * x[j];
+        }
+        x[i] = s / a[i * m + i];
+        if !x[i].is_finite() {
+            return None;
+        }
+    }
+    Some(x)
+}
+
+/// Ajustement polynomial pondéré de degré d (moindres carrés, d ≤ 4) :
+/// coefficients décroissants [p_d, …, p_0] ; (t, u, n) = valeur, cible,
+/// effectif.
+fn fit_poly(pts: &[(f64, f64, f64)], d: usize) -> Option<Vec<f64>> {
+    let m = d + 1;
+    let mut a = vec![0.0f64; m * m];
+    let mut b = vec![0.0f64; m];
+    for &(t, u, w) in pts {
+        if !w.is_finite() || w <= 0.0 {
+            continue;
+        }
+        // t^0 … t^(2d)
+        let mut pw = [1.0f64; 9];
+        for e in 1..2 * d + 1 {
+            pw[e] = pw[e - 1] * t;
+        }
+        for j in 0..m {
+            b[j] += w * pw[j] * u;
+            for i in 0..m {
+                a[j * m + i] += w * pw[j + i];
+            }
+        }
+    }
+    gauss(m, &mut a, &mut b)
+}
+
+impl Serie2 {
+    /// Moments pondérés du nuage (None si aucun effectif).
+    pub fn moments(&self) -> Option<Params2> {
+        let n: f64 = self.points.iter().map(|p| p.n).sum();
+        if n <= 0.0 {
+            return None;
+        }
+        let (mut sx, mut sy) = (0.0, 0.0);
+        for p in &self.points {
+            sx += p.n * p.x;
+            sy += p.n * p.y;
+        }
+        let (mx, my) = (sx / n, sy / n);
+        let (mut vx, mut vy, mut cov) = (0.0, 0.0, 0.0);
+        for p in &self.points {
+            let (dx, dy) = (p.x - mx, p.y - my);
+            vx += p.n * dx * dx;
+            vy += p.n * dy * dy;
+            cov += p.n * dx * dy;
+        }
+        Some(Params2 {
+            n,
+            mx,
+            my,
+            sx: (vx / n).sqrt(),
+            sy: (vy / n).sqrt(),
+            cov: cov / n,
+        })
+    }
+
+    /// Corrélation linéaire r = cov(x, y) / (σx σy) — calculée sur les
+    /// variables x et y (le rôle permuté n'intervient pas, manuel p. 54).
+    pub fn correlation(&self) -> Option<f64> {
+        let pr = self.moments()?;
+        if pr.sx <= 0.0 || pr.sy <= 0.0 {
+            return None;
+        }
+        Some(pr.cov / (pr.sx * pr.sy))
+    }
+
+    /// Couples transformés selon la nature de la régression : deuxièmes
+    /// membres « u » en fonction de « t ». None si les valeurs sont hors
+    /// du domaine de la transformation.
+    fn couples_tr(&self) -> Option<Vec<(f64, f64, f64)>> {
+        let mut pts = Vec::with_capacity(self.points.len());
+        for p in &self.points {
+            let (t, u) = if self.role == Role::XenY {
+                (p.y, p.x)
+            } else {
+                (p.x, p.y)
+            };
+            let (t, u) = match self.reg {
+                Reg::Aucune => return None,
+                Reg::Lineaire | Reg::Poly2 | Reg::Poly3 | Reg::Poly4 | Reg::Mayer => (t, u),
+                Reg::Logarithmique => {
+                    if t <= 0.0 {
+                        return None;
+                    }
+                    (t.ln(), u)
+                }
+                Reg::Exponentielle => {
+                    if u <= 0.0 {
+                        return None;
+                    }
+                    (t, u.ln())
+                }
+                Reg::Puissance => {
+                    if t <= 0.0 || u <= 0.0 {
+                        return None;
+                    }
+                    (t.ln(), u.ln())
+                }
+            };
+            if !u.is_finite() || !t.is_finite() {
+                return None;
+            }
+            pts.push((t, u, p.n));
+        }
+        Some(pts)
+    }
+
+    /// Courbe de régression ajustée (None : « aucune courbe » ou conditions
+    /// non remplies — au moins 2 points, valeurs du domaine…).
+    pub fn ajuste(&self) -> Option<Ajustement> {
+        let pts = self.couples_tr()?;
+        // au moins 2 points d'effectif non nul (comme l'original)
+        let npts = pts.iter().filter(|(_, _, n)| *n > 0.0).count();
+        if npts < 2 {
+            return None;
+        }
+        let d = match self.reg {
+            Reg::Aucune => return None,
+            Reg::Lineaire
+            | Reg::Mayer
+            | Reg::Logarithmique
+            | Reg::Exponentielle
+            | Reg::Puissance => 1,
+            Reg::Poly2 => 2,
+            Reg::Poly3 => 3,
+            Reg::Poly4 => 4,
+        };
+        let min_pts = match self.reg {
+            Reg::Poly2 => 3,
+            Reg::Poly3 => 4,
+            Reg::Poly4 => 5,
+            _ => 2,
+        };
+        if npts < min_pts {
+            return None;
+        }
+        match self.reg {
+            Reg::Aucune
+            | Reg::Lineaire
+            | Reg::Mayer
+            | Reg::Logarithmique
+            | Reg::Exponentielle
+            | Reg::Puissance
+            | Reg::Poly2
+            | Reg::Poly3
+            | Reg::Poly4 => (), // traité plus bas / déjà filtré
+        }
+        match self.reg {
+            Reg::Aucune => None,
+            Reg::Mayer => {
+                // séparation du nuage : les mayer_k premiers points du
+                // premier sous-nuage, le reste dans le second
+                let k = self.mayer_k.clamp(1, npts - 1);
+                let mut g1 = (0.0, 0.0);
+                let mut w1 = 0.0;
+                let mut g2 = (0.0, 0.0);
+                let mut w2 = 0.0;
+                for &(t, u, w) in pts.iter().take(k) {
+                    g1.0 += w * t;
+                    g1.1 += w * u;
+                    w1 += w;
+                }
+                for &(t, u, w) in pts.iter().skip(k) {
+                    g2.0 += w * t;
+                    g2.1 += w * u;
+                    w2 += w;
+                }
+                if w1 <= 0.0 || w2 <= 0.0 {
+                    return None;
+                }
+                let (g1, g2) = ((g1.0 / w1, g1.1 / w1), (g2.0 / w2, g2.1 / w2));
+                if (g2.0 - g1.0).abs() < 1e-12 {
+                    return None;
+                }
+                let a = (g2.1 - g1.1) / (g2.0 - g1.0);
+                Some(Ajustement::Affine {
+                    a,
+                    b: g1.1 - a * g1.0,
+                })
+            }
+            Reg::Lineaire | Reg::Logarithmique | Reg::Exponentielle | Reg::Puissance => {
+                // fit_poly renvoie les coefficients en puissance
+                // croissante : [constante, pente]
+                let coef = fit_poly(&pts, 1)?;
+                let (c0, c1) = (coef[0], coef[1]);
+                match self.reg {
+                    Reg::Lineaire => Some(Ajustement::Affine { a: c1, b: c0 }),
+                    Reg::Logarithmique => Some(Ajustement::Logarithmique { a: c1, b: c0 }),
+                    // ln y = c0 + c1 x : y = e^{c0} (e^{c1})^x
+                    Reg::Exponentielle => Some(Ajustement::Exponentielle {
+                        a: c0.exp(),
+                        b: c1.exp(),
+                    }),
+                    // ln y = c0 + c1 ln x : y = e^{c0} x^{c1}
+                    Reg::Puissance => Some(Ajustement::Puissance { a: c0.exp(), b: c1 }),
+                    _ => unreachable!(),
+                }
+            }
+            Reg::Poly2 | Reg::Poly3 | Reg::Poly4 => {
+                // horner attend les coefficients décroissants
+                let mut coef = fit_poly(&pts, d)?;
+                coef.reverse();
+                Some(Ajustement::Polynome { coef })
+            }
+        }
+    }
+
+    /// Corrélation « corrigée » : calculée sur les couples transformés
+    /// selon la nature (manuel p. 54) ; sans signification pour les
+    /// polynômes de degré > 1.
+    pub fn r_corrige(&self) -> Option<f64> {
+        match self.reg {
+            Reg::Aucune | Reg::Poly2 | Reg::Poly3 | Reg::Poly4 => None,
+            _ => {
+                let pts = self.couples_tr()?;
+                let m: f64 = pts.iter().map(|(_, _, n)| n).sum();
+                if m <= 0.0 {
+                    return None;
+                }
+                let (mut st, mut su) = (0.0, 0.0);
+                for &(t, u, n) in &pts {
+                    st += n * t;
+                    su += n * u;
+                }
+                let (mt, mu) = (st / m, su / m);
+                let (mut vt, mut vu, mut cv) = (0.0, 0.0, 0.0);
+                for &(t, u, n) in &pts {
+                    let (dt, du) = (t - mt, u - mu);
+                    vt += n * dt * dt;
+                    vu += n * du * du;
+                    cv += n * dt * du;
+                }
+                if vt <= 0.0 || vu <= 0.0 {
+                    return None;
+                }
+                Some(cv / m / ((vt / m).sqrt() * (vu / m).sqrt()))
+            }
+        }
+    }
+
+    /// Dessin (v0.8) dans le repère de la page : axes cotés, titre via
+    /// `titre_piece`, nuage de points (disques), courbe de régression
+    /// échantillonnée sur la fenêtre visible (comme l'original qui range
+    /// l'équation dans la courbe paramétrée 1), équation en légende.
+    pub fn draw_list(&self, p: &Page) -> Vec<Piece> {
+        if !self.dessiner {
+            return Vec::new();
+        }
+        let Some(mom) = self.moments() else {
+            return Vec::new();
+        };
+        if (mom.n - 0.0).abs() < EPS || self.points.is_empty() {
+            return Vec::new();
+        }
+        let mut out = pieces_axes(p, true, true, false);
+        if let Some(t) = titre_piece(p, &self.titre) {
+            out.push(t);
+        }
+        // nuage
+        for pt in &self.points {
+            if pt.n <= 0.0 || !pt.x.is_finite() || !pt.y.is_finite() {
+                continue;
+            }
+            out.push(Piece::Disque {
+                c: (p.mm_x(pt.x), p.mm_y(pt.y)),
+                r: 0.9,
+                fill: self.couleur_points,
+                stroke: Some((NOIR, 0.25)),
+            });
+        }
+        // courbe de régression sur la fenêtre visible (l'équation est
+        // ajustée sur les couples selon le rôle : en XenY, `valeur`
+        // donne x en fonction de y)
+        if let Some(aj) = self.ajuste() {
+            let mut pts = Vec::new();
+            let (tlo, thi) = if self.role == Role::XenY {
+                p.y_range()
+            } else {
+                p.x_range()
+            };
+            let n = 240;
+            for i in 0..=n {
+                let t = tlo + (thi - tlo) * i as f64 / n as f64;
+                let v = aj.valeur(t);
+                if v.is_finite() && t.is_finite() {
+                    pts.push(if self.role == Role::XenY {
+                        (p.mm_x(v), p.mm_y(t))
+                    } else {
+                        (p.mm_x(t), p.mm_y(v))
+                    });
+                }
+            }
+            if pts.len() >= 2 {
+                out.push(Piece::Poly {
+                    pts,
+                    fill: None,
+                    stroke: Some((self.couleur_courbe, 0.7)),
+                });
+            }
+            if self.aff_equation {
+                let prefixe = if self.role == Role::XenY { "x" } else { "y" };
+                let eq = aj.equation();
+                let eq = if prefixe == "x" {
+                    eq.replacen('y', "x", 1)
+                } else {
+                    eq
+                };
+                out.push(Piece::Texte {
+                    mm: (p.width_mm / 2.0, p.height_mm - 4.6),
+                    txt: eq,
+                    c: NOIR,
+                    taille: 2.4,
+                    ancre: "middle",
+                    vertical: false,
+                    gras: false,
+                    italique: false,
+                });
+            }
+        }
+        out
+    }
+}
+
 // ---------------------------------------------------------------- exemples
 
 /// Exemple de l'original : valeurs isolées (les nombres du panneau
@@ -2424,6 +2988,193 @@ mod tests {
         let mut s = s_suite(SuiteDef::Lineaire { f: "2n+1".into() });
         s.dessiner = false;
         assert!(s.draw_list(&Page::default()).is_empty());
+    }
+
+    fn s2(points: &[(f64, f64)], reg: Reg) -> Serie2 {
+        Serie2 {
+            titre: "T".into(),
+            points: points
+                .iter()
+                .map(|&(x, y)| Couple { x, y, n: 1.0 })
+                .collect(),
+            reg,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn s2_reg_lineaire_exact() {
+        // points de y = 2x + 1 : ajustement exact, r = 1
+        let s = s2(
+            &[(0.0, 1.0), (1.0, 3.0), (2.0, 5.0), (5.0, 11.0)],
+            Reg::Lineaire,
+        );
+        let aj = s.ajuste().unwrap();
+        if let Ajustement::Affine { a, b } = aj {
+            assert!((a - 2.0).abs() < 1e-9, "{a}");
+            assert!((b - 1.0).abs() < 1e-9, "{b}");
+        } else {
+            panic!("pas une affine : {aj:?}");
+        }
+        assert!((s.correlation().unwrap() - 1.0).abs() < 1e-12);
+        assert!((s.r_corrige().unwrap() - 1.0).abs() < 1e-12);
+        assert_eq!(aj.equation(), "y = 2 x + 1");
+    }
+
+    #[test]
+    fn s2_reg_exponentielle() {
+        // y = 3·2^x : les moindres carrés exacts avant bruit
+        let s = s2(
+            &[(0.0, 3.0), (1.0, 6.0), (2.0, 12.0), (3.0, 24.0)],
+            Reg::Exponentielle,
+        );
+        let aj = s.ajuste().unwrap();
+        if let Ajustement::Exponentielle { a, b } = aj {
+            assert!((a - 3.0).abs() < 1e-9, "{a}");
+            assert!((b - 2.0).abs() < 1e-9, "{b}");
+        } else {
+            panic!("pas une exponentielle : {aj:?}");
+        }
+        assert!((aj.valeur(4.0) - 48.0).abs() < 1e-9);
+        // y ≤ 0 interdit
+        let s = s2(&[(0.0, 3.0), (1.0, -6.0)], Reg::Exponentielle);
+        assert!(s.ajuste().is_none());
+    }
+
+    #[test]
+    fn s2_reg_puissance() {
+        // y = 4 x^1.5 → en (4, 32)
+        let s = s2(&[(1.0, 4.0), (4.0, 32.0)], Reg::Puissance);
+        let aj = s.ajuste().unwrap();
+        if let Ajustement::Puissance { a, b } = aj {
+            assert!((a - 4.0).abs() < 1e-9, "{a}");
+            assert!((b - 1.5).abs() < 1e-9, "{b}");
+        } else {
+            panic!("pas une puissance : {aj:?}");
+        }
+        assert!((aj.valeur(4.0) - 32.0).abs() < 1e-9);
+        // x ≤ 0 interdit
+        let s = s2(&[(-1.0, 4.0), (2.0, 8.0)], Reg::Puissance);
+        assert!(s.ajuste().is_none());
+    }
+
+    #[test]
+    fn s2_reg_polynome() {
+        // 3 points parabole y = x² : passe exactement par les 3 points
+        let s = s2(&[(0.0, 0.0), (1.0, 1.0), (2.0, 4.0)], Reg::Poly2);
+        let aj = s.ajuste().unwrap();
+        assert_eq!(aj.valeur(3.0), 9.0);
+        // la parabole passe par les 3 points (manuel p. 53)
+        for &(x, y) in &[(0.0, 0.0), (1.0, 1.0), (2.0, 4.0)] {
+            assert_eq!(aj.valeur(x), y);
+        }
+        // degré 2 : corrélation corrigée sans signification
+        assert!(s.r_corrige().is_none());
+    }
+
+    #[test]
+    fn s2_reg_mayer() {
+        // noyau : séparation 1 / 2, la droite passe par G1 et G2
+        let s = Serie2 {
+            mayer_k: 1,
+            ..s2(&[(0.0, 0.0), (2.0, 4.0), (4.0, 8.0)], Reg::Mayer)
+        };
+        let aj = s.ajuste().unwrap();
+        if let Ajustement::Affine { a, b } = aj {
+            assert!((a - 2.0).abs() < 1e-9, "{a}");
+            assert!(b.abs() < 1e-9, "{b}");
+        } else {
+            panic!("pas une affine de Mayer : {aj:?}");
+        }
+    }
+
+    #[test]
+    fn s2_role_permute() {
+        // x = 2y + 1 : en XenY, la valeur évaluée sur y
+        let mut s = s2(
+            &[(1.0, 0.0), (3.0, 1.0), (5.0, 2.0), (11.0, 5.0)],
+            Reg::Lineaire,
+        );
+        s.role = Role::XenY;
+        let aj = s.ajuste().unwrap();
+        // points (y, x) = (0,1), (1,3), (2,5), (5,11) — x = 2y + 1 exact
+        assert!((aj.valeur(2.0) - 5.0).abs() < 1e-9);
+        // l'équation de l'ajustement de base reste en y ; l'échange
+        // x↔y est géré à l'(affichage (draw_list re-placer le préfixe)
+        assert!(aj.equation().contains('y'));
+        assert!(aj.equation().starts_with("y ="));
+    }
+
+    #[test]
+    fn s2_moments_cov() {
+        // points pondérés : (0,0) x1, (1,1) x2 → cov = 0,5
+        let s = Serie2 {
+            points: vec![
+                Couple {
+                    x: 0.0,
+                    y: 0.0,
+                    n: 1.0,
+                },
+                Couple {
+                    x: 1.0,
+                    y: 1.0,
+                    n: 2.0,
+                },
+            ],
+            ..Default::default()
+        };
+        let m = s.moments().unwrap();
+        assert_eq!(m.n, 3.0);
+        assert_eq!(m.mx, 2.0 / 3.0);
+        assert!((m.cov - 2.0 / 9.0).abs() < 1e-9);
+        // l'effectif 0 est ignoré dans l'ajustement ; aucun moment nul
+        let vide = Serie2 {
+            points: vec![],
+            ..Default::default()
+        };
+        assert!(vide.moments().is_none());
+        assert!(vide.ajuste().is_none());
+    }
+
+    #[test]
+    fn s2_dessine_nuage_et_courbe() {
+        let s = s2(&[(1.0, 2.0), (2.0, 4.0), (3.0, 6.0)], Reg::Lineaire);
+        let pieces = s.draw_list(&Page::default());
+        assert!(pieces.iter().any(|p| matches!(p, Piece::Disque { .. })));
+        assert!(pieces.iter().any(|p| matches!(p, Piece::Poly { .. })));
+        // équation en légende
+        assert!(pieces
+            .iter()
+            .any(|p| matches!(p, Piece::Texte { txt, .. } if txt.contains("y ="))));
+        // « aucune courbe » : nuage seul, pas de Poly ni d'équation
+        let s = Serie2 {
+            reg: Reg::Aucune,
+            ..s2(&[(1.0, 2.0), (2.0, 4.0), (3.0, 6.0)], Reg::Aucune)
+        };
+        let pieces = s.draw_list(&Page::default());
+        assert!(pieces.iter().any(|p| matches!(p, Piece::Disque { .. })));
+        // l'axes de pieces_axes contient déjà des Poly (flèches) :
+        // « aucune courbe » se vérifie via l'équation absente
+        assert!(!pieces
+            .iter()
+            .any(|p| matches!(p, Piece::Texte { txt, .. } if txt.contains("y ="))));
+        // masqué
+        let s = Serie2 {
+            dessiner: false,
+            ..s2(&[(1.0, 2.0), (2.0, 4.0)], Reg::Lineaire)
+        };
+        assert!(s.draw_list(&Page::default()).is_empty());
+    }
+
+    #[test]
+    fn s2_json_sans_reg_defaut() {
+        // session antérieure (sans les champs v0.8) : défauts cohérents
+        let txt = r#"{"titre":"S","points":[],"reg":"Aucune","dessiner":true}"#;
+        let s: Serie2 = serde_json::from_str(txt).unwrap();
+        assert_eq!(s.reg, Reg::Aucune);
+        assert_eq!(s.role, Role::YenX);
+        assert_eq!(s.mayer_k, 1);
+        assert!(s.aff_equation);
     }
 
     #[test]

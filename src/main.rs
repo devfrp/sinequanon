@@ -134,6 +134,8 @@ struct Opts {
     boites: Vec<stats::BoitesMultiples>,
     /// suites numériques (v0.6+)
     suites: Vec<stats::Suite>,
+    /// séries statistiques à 2 variables (v0.8+)
+    serie2: Vec<stats::Serie2>,
 }
 
 impl Default for Opts {
@@ -154,6 +156,7 @@ impl Default for Opts {
             serie1: Vec::new(),
             boites: Vec::new(),
             suites: Vec::new(),
+            serie2: Vec::new(),
         }
     }
 }
@@ -234,6 +237,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
                 o.serie1 = s.stats;
                 o.boites = s.boites;
                 o.suites = s.suites;
+                o.serie2 = s.serie2;
             }
             "--svg" => o.svg = Some(valeur(args, &mut i, a)?),
             "--png" => o.png = Some(valeur(args, &mut i, a)?),
@@ -275,7 +279,12 @@ fn exporter(args: &[String]) -> Result<(), String> {
             PALETTE[(k + 2) % PALETTE.len()],
         ));
     }
-    if curves.is_empty() && o.serie1.is_empty() && o.boites.is_empty() && o.suites.is_empty() {
+    if curves.is_empty()
+        && o.serie1.is_empty()
+        && o.boites.is_empty()
+        && o.suites.is_empty()
+        && o.serie2.is_empty()
+    {
         return Err(
             "aucune courbe ni série statistique : utilisez -f, -p, -c ou --session (voir --aide)"
                 .into(),
@@ -324,6 +333,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie1,
             &o.boites,
             &o.suites,
+            &o.serie2,
             &PathBuf::from(svg),
         )
         .map_err(|e| format!("écriture de {svg} : {e}"))?;
@@ -337,6 +347,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie1,
             &o.boites,
             &o.suites,
+            &o.serie2,
             &PathBuf::from("sinequanon.svg"),
         )
         .map_err(|e| format!("écriture de sinequanon.svg : {e}"))?;
@@ -351,6 +362,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie1,
             &o.boites,
             &o.suites,
+            &o.serie2,
             o.px_par_mm,
             &PathBuf::from(png),
         )

@@ -8,7 +8,9 @@ use crate::grid::Page;
 use crate::i18n::{self, Lang};
 use crate::render::{self, CurvePolys};
 use crate::session::{self, Session};
-use crate::stats::{self, BoitesMultiples, Donnees, Loi, Piece as PieceStats, Style, Visualiser};
+use crate::stats::{
+    self, BoitesMultiples, Donnees, Loi, Piece as PieceStats, Reg, Role, Style, Visualiser,
+};
 use crate::tableau::{self as tab, Piece, Tableau};
 use eframe::egui::{
     self, Align2, Color32, ComboBox, DragValue, FontId, Pos2, Rect, RichText, Sense, Stroke,
@@ -55,6 +57,10 @@ pub struct SqApp {
     pub suites: Vec<crate::stats::Suite>,
     /// fenêtre d'édition ouverte : index de la suite
     pub suite_sel: Option<usize>,
+    /// séries statistiques à 2 variables (v0.8+)
+    pub serie2: Vec<crate::stats::Serie2>,
+    /// fenêtre d'édition ouverte : index de la série à 2 variables
+    pub serie2_sel: Option<usize>,
     /// fenêtre d'édition ouverte : index de la série statistique
     pub stat_sel: Option<usize>,
     /// volet actif de la fenêtre statistique (0..=3)
@@ -77,34 +83,46 @@ pub struct GenEtat {
 
 impl SqApp {
     pub fn new(lang_flag: Option<Lang>) -> Self {
-        let (page, curves, saved_lang, points, tangentes, integrales, tableaux, stats, boites) =
-            match session::load() {
-                Some(s) => (
-                    s.page,
-                    s.curves,
-                    Some(s.lang),
-                    s.points,
-                    s.tangentes,
-                    s.integrales,
-                    s.tableaux,
-                    s.stats,
-                    s.boites,
-                ),
-                None => (
-                    Page::default(),
-                    vec![
-                        Curve::fonction("sin(x)", PALETTE[0]),
-                        Curve::fonction("x^2/4 - 2", PALETTE[1]),
-                    ],
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                ),
-            };
+        let (
+            page,
+            curves,
+            saved_lang,
+            points,
+            tangentes,
+            integrales,
+            tableaux,
+            stats,
+            boites,
+            suites,
+        ) = match session::load() {
+            Some(s) => (
+                s.page,
+                s.curves,
+                Some(s.lang),
+                s.points,
+                s.tangentes,
+                s.integrales,
+                s.tableaux,
+                s.stats,
+                s.boites,
+                s.suites,
+            ),
+            None => (
+                Page::default(),
+                vec![
+                    Curve::fonction("sin(x)", PALETTE[0]),
+                    Curve::fonction("x^2/4 - 2", PALETTE[1]),
+                ],
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        };
         // le drapeau --lang prime sur la session ; sinon français
         let lang = lang_flag.or(saved_lang).unwrap_or(Lang::Fr);
         let selected = (!curves.is_empty()).then_some(0usize);
@@ -126,8 +144,10 @@ impl SqApp {
             tableaux,
             stats,
             boites,
-            suites: Vec::new(),
+            suites,
             suite_sel: None,
+            serie2: Vec::new(),
+            serie2_sel: None,
             stat_sel: None,
             stat_volet: 0,
             tab_sel: None,
@@ -217,6 +237,8 @@ impl SqApp {
                         self.section_statistiques(ui);
                         ui.separator();
                         self.section_suites(ui);
+                        ui.separator();
+                        self.section_serie2(ui);
                         ui.separator();
                         self.section_repere(ui);
                         ui.separator();
@@ -1046,6 +1068,242 @@ impl SqApp {
         }
     }
 
+    /// Section « Séries 2 variables » (v0.8, module statistiques) :
+    /// ajout, liste cliquant-ouvrant l'éditeur, masquage, suppression.
+    fn section_serie2(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.horizontal(|ui| {
+            ui.strong(t.serie2);
+            if ui.button(t.st2_aj).clicked() {
+                self.serie2.push(stats::Serie2 {
+                    titre: format!("Serie2 {}", self.serie2.len() + 1),
+                    ..Default::default()
+                });
+                self.serie2_sel = Some(self.serie2.len() - 1);
+                self.dirty = true;
+            }
+        });
+        let mut to_delete: Option<usize> = None;
+        let mut to_toggle: Option<usize> = None;
+        for (i, s) in self.serie2.iter().enumerate() {
+            let label = if s.titre.is_empty() {
+                format!("{} {}", t.serie2, i + 1)
+            } else {
+                s.titre.lines().next().unwrap_or("").to_string()
+            };
+            ui.horizontal(|ui| {
+                let vis = if s.dessiner { "\u{25c9}" } else { "\u{25cb}" };
+                if ui
+                    .add(egui::Label::new(RichText::new(vis).size(16.0)).sense(Sense::click()))
+                    .clicked()
+                {
+                    to_toggle = Some(i);
+                }
+                let caption = format!("{label} ({} pt)", s.points.len());
+                if ui
+                    .add(egui::Label::new(RichText::new(caption).small()).sense(Sense::click()))
+                    .clicked()
+                {
+                    self.serie2_sel = Some(i);
+                }
+                if ui.small_button("\u{2715}").clicked() {
+                    to_delete = Some(i);
+                }
+            });
+        }
+        if let Some(i) = to_toggle {
+            if let Some(s) = self.serie2.get_mut(i) {
+                s.dessiner = !s.dessiner;
+                self.dirty = true;
+            }
+        }
+        if let Some(i) = to_delete {
+            self.serie2.remove(i);
+            self.serie2_sel = None;
+            self.dirty = true;
+        }
+        if self.serie2.is_empty() {
+            ui.label(RichText::new(t.aucune).weak().small());
+        }
+    }
+
+    /// Fenêtre d'édition d'une série à 2 variables (v0.8) : tableau des
+    /// couples (xᵢ, yᵢ, nᵢ), nature de régression, rôle des variables,
+    /// sous-nuage de Mayer, équation affichée, panneau Calculs
+    /// (moments pondérés, r corrigé).
+    fn fenetre_serie2(&mut self, ctx: &egui::Context) {
+        let t = i18n::table(self.lang);
+        let Some(idx) = self.serie2_sel else { return };
+        if self.serie2.get(idx).is_none() {
+            self.serie2_sel = None;
+            return;
+        }
+        let mut ouverte = true;
+        egui::Window::new(format!("{} — {}", t.serie2, idx + 1))
+            .open(&mut ouverte)
+            .resizable(true)
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                let dirty = &mut self.dirty;
+                let s = &mut self.serie2[idx];
+                ui.horizontal(|ui| {
+                    ui.label(t.stat_titre);
+                    let re = ui.add(TextEdit::singleline(&mut s.titre).desired_width(200.0));
+                    ui.checkbox(&mut s.dessiner, t.stat_dessiner);
+                    if ui.checkbox(&mut s.aff_equation, t.st2_equation).changed() || re.changed() {
+                        *dirty = true;
+                    }
+                });
+                // nature de la régression
+                let natures = [
+                    (Reg::Aucune, t.st2_aucune),
+                    (Reg::Lineaire, t.st2_lineaire),
+                    (Reg::Logarithmique, t.st2_log),
+                    (Reg::Exponentielle, t.st2_expo),
+                    (Reg::Puissance, t.st2_puissance),
+                    (Reg::Mayer, t.st2_mayer),
+                    (Reg::Poly2, t.st2_poly2),
+                    (Reg::Poly3, t.st2_poly3),
+                    (Reg::Poly4, t.st2_poly4),
+                ];
+                ui.horizontal(|ui| {
+                    ui.label(t.st2_nature);
+                    ComboBox::from_id_salt("nature-reg2")
+                        .selected_text(natures[s.reg as usize].1)
+                        .show_ui(ui, |ui| {
+                            for (r, label) in natures {
+                                if ui.selectable_label(s.reg == r, label).clicked() {
+                                    s.reg = r;
+                                    *dirty = true;
+                                }
+                            }
+                        });
+                    ui.label(t.st2_role);
+                    if ui
+                        .selectable_label(s.role == Role::YenX, t.st2_yenx)
+                        .clicked()
+                        && s.role != Role::YenX
+                    {
+                        s.role = Role::YenX;
+                        *dirty = true;
+                    }
+                    if ui
+                        .selectable_label(s.role == Role::XenY, t.st2_xeny)
+                        .clicked()
+                        && s.role != Role::XenY
+                    {
+                        s.role = Role::XenY;
+                        *dirty = true;
+                    }
+                });
+                // sous-nuage de Mayer
+                if s.reg == Reg::Mayer {
+                    let m = s.points.len().max(2);
+                    ui.horizontal(|ui| {
+                        ui.label(t.st2_mayer_k);
+                        if ui
+                            .add(DragValue::new(&mut s.mayer_k).range(1..=m.saturating_sub(1)))
+                            .changed()
+                        {
+                            *dirty = true;
+                        }
+                    });
+                }
+                // tableau des couples (xᵢ, yᵢ, nᵢ)
+                egui::Grid::new("serie2-pts").striped(true).show(ui, |ui| {
+                    ui.strong(t.st2_x);
+                    ui.strong(t.st2_y);
+                    ui.strong(t.st2_n);
+                    ui.label("");
+                    ui.end_row();
+                    let mut to_remove: Option<usize> = None;
+                    for (i, pt) in s.points.iter_mut().enumerate() {
+                        if ui
+                            .add(DragValue::new(&mut pt.x).speed(1.0).range(-1e12..=1e12))
+                            .changed()
+                        {
+                            *dirty = true;
+                        }
+                        if ui
+                            .add(DragValue::new(&mut pt.y).speed(1.0).range(-1e12..=1e12))
+                            .changed()
+                        {
+                            *dirty = true;
+                        }
+                        if ui
+                            .add(DragValue::new(&mut pt.n).speed(1.0).range(0.0..=1e12))
+                            .changed()
+                        {
+                            *dirty = true;
+                        }
+                        if ui.small_button("\u{2715}").clicked() {
+                            to_remove = Some(i);
+                        }
+                        ui.end_row();
+                    }
+                    if let Some(i) = to_remove {
+                        s.points.remove(i);
+                        *dirty = true;
+                    }
+                });
+                if ui.button(t.st_aj_ligne).clicked() {
+                    s.points.push(stats::Couple {
+                        x: 0.0,
+                        y: 0.0,
+                        n: 1.0,
+                    });
+                    *dirty = true;
+                }
+                ui.separator();
+                // panneau Calculs (moments pondérés, r, équation)
+                ui.strong(t.stat_calculs);
+                match s.moments() {
+                    Some(mom) => {
+                        egui::Grid::new("calculs-s2").num_columns(2).show(ui, |ui| {
+                            let mut rows = vec![
+                                (t.st_n, mom.n),
+                                ("x\u{203e}", mom.mx),
+                                ("y\u{203e}", mom.my),
+                                ("\u{3c3}x", mom.sx),
+                                ("\u{3c3}y", mom.sy),
+                                (t.st2_cov, mom.cov),
+                            ];
+                            // r linéaire, sur les variables x et y (le
+                            // rôle permuté n'intervient pas, manuel p. 54)
+                            if let Some(r) = s.correlation() {
+                                rows.push((t.st2_r, r));
+                            }
+                            for (lbl, val) in rows {
+                                ui.label(lbl);
+                                ui.label(RichText::new(stats::num(val)).strong());
+                                ui.end_row();
+                            }
+                        });
+                        if let Some(aj) = s.ajuste() {
+                            let eq = aj.equation();
+                            let eq = if s.role == Role::XenY {
+                                eq.replacen('y', "x", 1)
+                            } else {
+                                eq
+                            };
+                            ui.label(RichText::new(eq).strong());
+                            // corrélation corrigée des couples transformés
+                            // (sans signification pour les polynômes > 1)
+                            if let Some(r) = s.r_corrige() {
+                                ui.label(format!("{} = {}", t.st2_r_corr, stats::num(r)));
+                            }
+                        }
+                    }
+                    None => {
+                        ui.weak(t.st_aucun_calcul);
+                    }
+                }
+            });
+        if !ouverte {
+            self.serie2_sel = None;
+        }
+    }
+
     fn section_repere(&mut self, ui: &mut Ui) {
         let t = i18n::table(self.lang);
         ui.strong(t.repere);
@@ -1164,6 +1422,7 @@ impl SqApp {
                     &self.stats,
                     &self.boites,
                     &self.suites,
+                    &self.serie2,
                     &path,
                 ) {
                     Ok(n) => self.set_status(format!("✔ {} écrit ({} octets)", path.display(), n)),
@@ -1183,6 +1442,7 @@ impl SqApp {
                     &self.stats,
                     &self.boites,
                     &self.suites,
+                    &self.serie2,
                     self.px_per_mm as f64,
                     &path,
                 ) {
@@ -1989,6 +2249,10 @@ impl SqApp {
             let pieces = s.draw_list(&self.page);
             dessiner(&pieces);
         }
+        for s2 in &self.serie2 {
+            let pieces = s2.draw_list(&self.page);
+            dessiner(&pieces);
+        }
     }
 
     /// Dessine les tableaux (aperçu GUI : segments + textes).
@@ -2410,6 +2674,7 @@ impl eframe::App for SqApp {
         self.fenetre_genere(ctx);
         self.fenetre_stat(ctx);
         self.fenetre_suite(ctx);
+        self.fenetre_serie2(ctx);
         // sauvegarde automatique si nécessaire
         if self.dirty {
             let s = Session {
@@ -2424,6 +2689,7 @@ impl eframe::App for SqApp {
                 stats: self.stats.clone(),
                 boites: self.boites.clone(),
                 suites: self.suites.clone(),
+                serie2: self.serie2.clone(),
             };
             if session::save(&s).is_ok() {
                 self.dirty = false;
