@@ -9,7 +9,8 @@ use crate::i18n::{self, Lang};
 use crate::render::{self, CurvePolys};
 use crate::session::{self, Session};
 use crate::stats::{
-    self, BoitesMultiples, Donnees, Loi, Piece as PieceStats, Reg, Role, Style, Visualiser,
+    self, Arbre, BoitesMultiples, BrancheArbre, Donnees, Loi, Piece as PieceStats, Reg, Role,
+    Style, Visualiser,
 };
 use crate::tableau::{self as tab, Piece, Tableau};
 use eframe::egui::{
@@ -61,6 +62,10 @@ pub struct SqApp {
     pub serie2: Vec<crate::stats::Serie2>,
     /// fenêtre d'édition ouverte : index de la série à 2 variables
     pub serie2_sel: Option<usize>,
+    /// arbres de probabilités (v0.9+)
+    pub arbres: Vec<Arbre>,
+    /// fenêtre d'édition ouverte : index de l'arbre
+    pub arbre_sel: Option<usize>,
     /// fenêtre d'édition ouverte : index de la série statistique
     pub stat_sel: Option<usize>,
     /// volet actif de la fenêtre statistique (0..=3)
@@ -148,6 +153,8 @@ impl SqApp {
             suite_sel: None,
             serie2: Vec::new(),
             serie2_sel: None,
+            arbres: Vec::new(),
+            arbre_sel: None,
             stat_sel: None,
             stat_volet: 0,
             tab_sel: None,
@@ -239,6 +246,8 @@ impl SqApp {
                         self.section_suites(ui);
                         ui.separator();
                         self.section_serie2(ui);
+                        ui.separator();
+                        self.section_arbres(ui);
                         ui.separator();
                         self.section_repere(ui);
                         ui.separator();
@@ -1304,6 +1313,185 @@ impl SqApp {
         }
     }
 
+    /// Section « Arbres de probabilités » (v0.9, module statistiques) :
+    /// ajout (exemple du manuel si vide), liste cliquant-ouvrant
+    /// l'éditeur, masquage, suppression.
+    fn section_arbres(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.horizontal(|ui| {
+            ui.strong(t.arbres);
+            if ui.button(t.m_arbre).clicked() {
+                if self.arbres.is_empty() {
+                    // exemple du manuel comme contenu par défaut
+                    self.arbres.push(stats::exemple_arbre());
+                } else {
+                    self.arbres.push(Arbre::default());
+                }
+                self.arbre_sel = Some(self.arbres.len() - 1);
+                self.dirty = true;
+            }
+        });
+        let mut to_delete: Option<usize> = None;
+        let mut to_toggle: Option<usize> = None;
+        for (i, a) in self.arbres.iter().enumerate() {
+            let label = if a.titre.is_empty() {
+                format!("{} {}", t.arbres, i + 1)
+            } else {
+                a.titre.lines().next().unwrap_or("").to_string()
+            };
+            ui.horizontal(|ui| {
+                let vis = if a.dessiner { "\u{25c9}" } else { "\u{25cb}" };
+                if ui
+                    .add(egui::Label::new(RichText::new(vis).size(16.0)).sense(Sense::click()))
+                    .clicked()
+                {
+                    to_toggle = Some(i);
+                }
+                let caption = format!("{label} ({} b)", a.branches.len());
+                if ui
+                    .add(egui::Label::new(RichText::new(caption).small()).sense(Sense::click()))
+                    .clicked()
+                {
+                    self.arbre_sel = Some(i);
+                }
+                if ui.small_button("\u{2715}").clicked() {
+                    to_delete = Some(i);
+                }
+            });
+        }
+        if let Some(i) = to_toggle {
+            if let Some(a) = self.arbres.get_mut(i) {
+                a.dessiner = !a.dessiner;
+                self.dirty = true;
+            }
+        }
+        if let Some(i) = to_delete {
+            self.arbres.remove(i);
+            self.arbre_sel = None;
+            self.dirty = true;
+        }
+        if self.arbres.is_empty() {
+            ui.label(RichText::new(t.aucune).weak().small());
+        }
+    }
+
+    /// Fenêtre d'édition d'un arbre de probabilités (v0.9) : table des
+    /// branches (code, nom, probabilité — préfixe « & » = barre), Ω,
+    /// « sans grille », couleur, épaisseur ; aperçu du niveau.
+    fn fenetre_arbre(&mut self, ctx: &egui::Context) {
+        let t = i18n::table(self.lang);
+        let Some(idx) = self.arbre_sel else {
+            return;
+        };
+        if self.arbres.get(idx).is_none() {
+            self.arbre_sel = None;
+            return;
+        }
+        let mut ouverte = true;
+        egui::Window::new(format!("{} — {}", t.arbres, idx + 1))
+            .open(&mut ouverte)
+            .resizable(true)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                let dirty = &mut self.dirty;
+                let a = &mut self.arbres[idx];
+                ui.horizontal(|ui| {
+                    ui.label(t.stat_titre);
+                    let re = ui.add(TextEdit::singleline(&mut a.titre).desired_width(200.0));
+                    ui.checkbox(&mut a.dessiner, t.stat_dessiner);
+                    if ui.checkbox(&mut a.omega, t.arb_omega).changed()
+                        || ui.checkbox(&mut a.sans_grille, t.arb_sans_grille).changed()
+                        || re.changed()
+                    {
+                        *dirty = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(t.couleur);
+                    if ui.color_edit_button_srgb(&mut a.couleur).changed() {
+                        *dirty = true;
+                    }
+                    ui.label(t.arb_epaisseur);
+                    if ui
+                        .add(
+                            DragValue::new(&mut a.epaisseur)
+                                .speed(0.05)
+                                .range(0.2..=4.0),
+                        )
+                        .changed()
+                    {
+                        *dirty = true;
+                    }
+                });
+                ui.separator();
+                egui::Grid::new("arbre-branches")
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.strong(t.arb_code);
+                        ui.strong(t.arb_nom);
+                        ui.strong(t.arb_pro);
+                        ui.label("");
+                        ui.end_row();
+                        let mut to_remove: Option<usize> = None;
+                        for (i, b) in a.branches.iter_mut().enumerate() {
+                            if ui
+                                .add(DragValue::new(&mut b.code).speed(1).range(1..=9999))
+                                .changed()
+                            {
+                                *dirty = true;
+                            }
+                            if ui
+                                .add(TextEdit::singleline(&mut b.nom).desired_width(80.0))
+                                .changed()
+                            {
+                                *dirty = true;
+                            }
+                            if ui
+                                .add(TextEdit::singleline(&mut b.proba).desired_width(50.0))
+                                .changed()
+                            {
+                                *dirty = true;
+                            }
+                            if ui.small_button("\u{2715}").clicked() {
+                                to_remove = Some(i);
+                            }
+                            ui.end_row();
+                        }
+                        if let Some(i) = to_remove {
+                            a.branches.remove(i);
+                            *dirty = true;
+                        }
+                    });
+                ui.horizontal(|ui| {
+                    if ui.button(t.st_aj_ligne).clicked() {
+                        a.branches.push(BrancheArbre {
+                            code: a.branches.iter().map(|b| b.code + 10).max().unwrap_or(1),
+                            nom: String::new(),
+                            proba: String::new(),
+                        });
+                        *dirty = true;
+                    }
+                    if ui.button(t.arb_exemple).clicked() {
+                        *a = stats::exemple_arbre();
+                        *dirty = true;
+                    }
+                });
+                // aperçu : niveau et feuilles reconnus par l'analyseur
+                if !a.branches.is_empty() {
+                    ui.weak(format!(
+                        "{} : {}, {} : {}",
+                        t.arb_niveaux,
+                        a.niveaux(),
+                        t.arb_terminaux,
+                        a.terminaux().len()
+                    ));
+                }
+            });
+        if !ouverte {
+            self.arbre_sel = None;
+        }
+    }
+
     fn section_repere(&mut self, ui: &mut Ui) {
         let t = i18n::table(self.lang);
         ui.strong(t.repere);
@@ -1423,6 +1611,7 @@ impl SqApp {
                     &self.boites,
                     &self.suites,
                     &self.serie2,
+                    &self.arbres,
                     &path,
                 ) {
                     Ok(n) => self.set_status(format!("✔ {} écrit ({} octets)", path.display(), n)),
@@ -1443,6 +1632,7 @@ impl SqApp {
                     &self.boites,
                     &self.suites,
                     &self.serie2,
+                    &self.arbres,
                     self.px_per_mm as f64,
                     &path,
                 ) {
@@ -2253,6 +2443,10 @@ impl SqApp {
             let pieces = s2.draw_list(&self.page);
             dessiner(&pieces);
         }
+        for a in &self.arbres {
+            let pieces = a.draw_list(&self.page);
+            dessiner(&pieces);
+        }
     }
 
     /// Dessine les tableaux (aperçu GUI : segments + textes).
@@ -2675,6 +2869,7 @@ impl eframe::App for SqApp {
         self.fenetre_stat(ctx);
         self.fenetre_suite(ctx);
         self.fenetre_serie2(ctx);
+        self.fenetre_arbre(ctx);
         // sauvegarde automatique si nécessaire
         if self.dirty {
             let s = Session {
@@ -2690,6 +2885,7 @@ impl eframe::App for SqApp {
                 boites: self.boites.clone(),
                 suites: self.suites.clone(),
                 serie2: self.serie2.clone(),
+                arbres: self.arbres.clone(),
             };
             if session::save(&s).is_ok() {
                 self.dirty = false;

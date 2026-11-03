@@ -39,6 +39,9 @@ pub struct Session {
     /// séries statistiques à 2 variables (v0.8+)
     #[serde(default)]
     pub serie2: Vec<crate::stats::Serie2>,
+    /// arbres de probabilités (v0.9+)
+    #[serde(default)]
+    pub arbres: Vec<crate::stats::Arbre>,
 }
 
 /// Chemin du fichier de session selon la plateforme.
@@ -98,6 +101,7 @@ mod tests {
             boites: vec![],
             suites: vec![],
             serie2: vec![],
+            arbres: vec![],
         };
         let txt = serde_json::to_string(&s).unwrap();
         let back: Session = serde_json::from_str(&txt).unwrap();

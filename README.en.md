@@ -44,6 +44,21 @@ Henry line).
 | Rendering | density curve normalized to its peak + legend "Law … : μ = …, σ = …" |
 | Interface | "Probability law" style (statistics window), Calculs panel |
 
+## v0.9 status — probability trees (module v0.9)
+
+The weighted-tree module (manual p. 62–64) is ported: the code / name /
+probability grid, levels of equal width, terminals spread evenly, Ω at
+the root, « no grid ».
+
+| Included | Details |
+|---|---|
+| Data | branch list `BrancheArbre { code, nom, proba }` (code 3× = 1st level, 32 = 2nd branch issued from 3, 341 = 1st issued from 34…) |
+| Names | free text; `&` prefix = horizontal bar above the name (Ā) |
+| Probabilities | decimal number or any text (0.5 ; p ; 1 p) |
+| Layout | levels of equal width across the page, terminals sorted alphabetically, equal vertical spacing, parents = mean of children, root = mean of level 1 |
+| Options | Ω (universe of us), « Effacer la grille et les axes » (checked by default = opaque full-page background), colour, thickness |
+| Interface | « Probability trees » side-panel section + editor (code/name/probability grid, manual example, levels/leaves preview) |
+
 ## v0.8 status — 2-variable statistics (module v0.8)
 
 The scatter plot / regression module (manual p. 52–54) is ported: the
@@ -213,6 +228,9 @@ git tag v0.2.0 && git push --tags     # automatic build + release
 - ✅ v0.8 — 2-variable statistics (module v0.8): scatter plots, 8 regressions
   (weighted least squares, Mayer, polynomials *), y/x roles, covariance,
   correlation + corrected correlation
+- ✅ v0.9 — probability trees (module v0.9): code/name/probability grid
+  (& prefix = bar), levels of equal width + evenly spread terminals,
+  Ω at the root, « no grid »
 - ⬜ automatic extrema and zeros
 - ⬜ BMP/GIF/EMF/EPS/LaTeX exports, Bézier curves, preferences, printing
 

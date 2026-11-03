@@ -2640,7 +2640,275 @@ impl Serie2 {
     }
 }
 
+// -------------------------------------------------- arbres probabilites
+
+/// Une branche d'un arbre de probabilités : code (1..9 au premier
+/// niveau, 12 = 2e branche issue de la branche 1, 341 = 1re branche
+/// issue de la branche 34…), nom d'événement (préfixe « & » = barre
+/// sur le nom) et probabilité (nombre ou texte libre, manuel p. 63).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BrancheArbre {
+    pub code: u32,
+    pub nom: String,
+    pub proba: String,
+}
+
+/// Un arbre de probabilités (manuel p. 62–64) : niveau mesuré par la
+/// longueur des codes, événements terminaux répartis à égale
+/// distance verticale, branches reliées du pied vers les feuilles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Arbre {
+    pub titre: String,
+    pub branches: Vec<BrancheArbre>,
+    pub dessiner: bool,
+    /// symbole Ω (univers des possibles) au pied de l'arbre
+    #[serde(default = "oui")]
+    pub omega: bool,
+    /// « effacer la grille et les axes du repère » (coché par défaut)
+    #[serde(default = "oui")]
+    pub sans_grille: bool,
+    #[serde(default = "def_couleur_courbe")]
+    pub couleur: [u8; 3],
+    /// épaisseur des traits en mm
+    #[serde(default = "def_epaisseur")]
+    pub epaisseur: f64,
+}
+
+fn def_epaisseur() -> f64 {
+    0.7
+}
+
+impl Default for Arbre {
+    fn default() -> Self {
+        Arbre {
+            titre: String::new(),
+            branches: Vec::new(),
+            dessiner: true,
+            omega: true,
+            sans_grille: true,
+            couleur: [0, 0, 204],
+            epaisseur: 0.7,
+        }
+    }
+}
+
+impl Arbre {
+    /// Ensemble des codes de l'arbre.
+    fn codes(&self) -> Vec<String> {
+        self.branches.iter().map(|b| b.code.to_string()).collect()
+    }
+
+    /// Nombre de niveaux (profondeur maximale des codes).
+    pub fn niveaux(&self) -> usize {
+        self.codes()
+            .iter()
+            .map(|c| c.chars().count())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Branches terminales (sans branche descendante), dans l'ordre
+    /// alphabétique des codes.
+    pub fn terminaux(&self) -> Vec<String> {
+        let mut codes: Vec<String> = self.branches.iter().map(|b| b.code.to_string()).collect();
+        codes.sort();
+        codes.dedup();
+        // un code est terminal si aucun autre code ne commence par lui
+        codes.retain(|c| {
+            !self
+                .branches
+                .iter()
+                .any(|b| b.code.to_string() != *c && b.code.to_string().starts_with(c.as_str()))
+        });
+        codes
+    }
+
+    /// Dessin de l'arbre (v0.9) : fond opaque si « sans grille », branches
+    /// colorées, probabilités au milieu des branches, noms des événements
+    /// aux extrémités, Ω au pied. Le rectangle = page entière avec
+    /// marges (comme l'original « adapter à la zone de dessin »).
+    pub fn draw_list(&self, p: &Page) -> Vec<Piece> {
+        if !self.dessiner {
+            return Vec::new();
+        }
+        let niv = self.niveaux();
+        if niv == 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        if self.sans_grille {
+            out.push(Piece::Fond {
+                mm: (0.0, 0.0),
+                w: p.width_mm,
+                h: p.height_mm,
+            });
+        }
+        if let Some(t) = titre_piece(p, &self.titre) {
+            out.push(t);
+        }
+        // positions disponibles
+        let (mg, md, mh, mb) = (22.0, 34.0, 12.0, 8.0);
+        let dispo_w = p.width_mm - mg - md;
+        let dispo_h = p.height_mm - mh - mb;
+        // chaque niveau a la même largeur ; pied de l'arbre sur l'axe gauche
+        let xs = |k: usize| mg + k as f64 * dispo_w / niv as f64;
+        // terminaux répartis à hauteur égale
+        let licks = self.terminaux();
+        let nterm = licks.len().max(1);
+        let ys = |i: usize| mh + (i as f64 + 0.5) * dispo_h / nterm as f64;
+        // y d'un code : moyenne des y de ses filles (récursif via les
+        // terminaux), stocké niveau par niveau
+        let mut pos: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+        for (i, terma) in licks.iter().enumerate() {
+            pos.insert(terma.clone(), ys(i));
+        }
+        // plus haute... les parents de plus haut niveau après les fils
+        let depth = |c: &str| c.chars().count();
+        let mut codes_par_niveau: Vec<Vec<String>> = vec![Vec::new(); niv + 1];
+        for c in self.codes() {
+            codes_par_niveau[depth(&c)].push(c);
+        }
+        for k in (1..niv).rev() {
+            for parent in &codes_par_niveau[k] {
+                let enfants: Vec<f64> = codes_par_niveau[k + 1]
+                    .iter()
+                    .filter(|c| c.starts_with(parent.as_str()) && c.len() == parent.len() + 1)
+                    .filter_map(|c| pos.get(c).copied())
+                    .collect();
+                if !enfants.is_empty() {
+                    let moy = enfants.iter().sum::<f64>() / enfants.len() as f64;
+                    pos.insert(parent.clone(), moy);
+                }
+            }
+        }
+        // pied de l'arbre : moyenne des branches du premier niveau
+        let rac: Vec<f64> = codes_par_niveau[1]
+            .iter()
+            .filter_map(|c| pos.get(c).copied())
+            .collect();
+        let y_racine = if rac.is_empty() {
+            mh + dispo_h / 2.0
+        } else {
+            rac.iter().sum::<f64>() / rac.len() as f64
+        };
+        if self.omega {
+            out.push(Piece::Texte {
+                mm: (xs(0) - 3.2, y_racine - 1.6),
+                txt: "\u{3a9}".to_string(),
+                c: NOIR,
+                taille: 3.2,
+                ancre: "middle",
+                vertical: false,
+                gras: false,
+                italique: false,
+            });
+        }
+        // branches (dans l'ordre de saisie)
+        for b in &self.branches {
+            let code = b.code.to_string();
+            let k = code.len();
+            let Some(&y1) = pos.get(&code) else {
+                continue;
+            };
+            // les branches de niveau 1 partent du pied de l'arbre
+            let y0 = if k == 1 {
+                y_racine
+            } else if let Some(&y) = pos.get(&code[..code.len() - 1]) {
+                y
+            } else {
+                continue; // parent absent : branche orpheline
+            };
+            let (x0, x1) = (xs(k - 1), xs(k));
+            out.push(Piece::Ligne {
+                x0,
+                y0,
+                x1,
+                y1,
+                c: self.couleur,
+                w: self.epaisseur,
+            });
+            // probabilité, au milieu de la branche
+            if !b.proba.is_empty() {
+                out.push(Piece::Texte {
+                    mm: ((x0 + x1) / 2.0, (y0 + y1) / 2.0 - 2.2),
+                    txt: b.proba.clone(),
+                    c: NOIR,
+                    taille: 2.3,
+                    ancre: "middle",
+                    vertical: false,
+                    gras: false,
+                    italique: false,
+                });
+            }
+        }
+        // noms des événements à l'arrivée des branches
+        for b in &self.branches {
+            let code = b.code.to_string();
+            let Some(&y) = pos.get(&code) else { continue };
+            let mut nom = b.nom.clone();
+            if let Some(rest) = nom.strip_prefix('&') {
+                // préfixe « & » : barre au-dessus de chaque lettre
+                nom = rest.chars().map(|c| format!("{c}\u{305}")).collect();
+            }
+            if nom.is_empty() {
+                continue;
+            }
+            out.push(Piece::Texte {
+                mm: (xs(code.len()) + 2.0, y + 1.1),
+                txt: nom,
+                c: NOIR,
+                taille: 3.0,
+                ancre: "start",
+                vertical: false,
+                gras: false,
+                italique: false,
+            });
+        }
+        out
+    }
+}
+
 // ---------------------------------------------------------------- exemples
+/// Exemple d'arbre du manuel (p.62) : « A » aux deux niveaux avec sa
+/// barre complémentaire.
+pub fn exemple_arbre() -> Arbre {
+    Arbre {
+        titre: "Arbre de probabilités".into(),
+        branches: vec![
+            BrancheArbre {
+                code: 1,
+                nom: "A".into(),
+                proba: "0,7".into(),
+            },
+            BrancheArbre {
+                code: 2,
+                nom: "&A".into(),
+                proba: "0,3".into(),
+            },
+            BrancheArbre {
+                code: 11,
+                nom: "B".into(),
+                proba: "0,6".into(),
+            },
+            BrancheArbre {
+                code: 12,
+                nom: "&B".into(),
+                proba: "0,4".into(),
+            },
+            BrancheArbre {
+                code: 21,
+                nom: "B".into(),
+                proba: "0,5".into(),
+            },
+            BrancheArbre {
+                code: 22,
+                nom: "&B".into(),
+                proba: "0,5".into(),
+            },
+        ],
+        ..Default::default()
+    }
+}
 
 /// Exemple de l'original : valeurs isolées (les nombres du panneau
 /// Calculs de p.45 : moyenne 1,958 ; écart type 1,69595…).
@@ -3175,6 +3443,112 @@ mod tests {
         assert_eq!(s.role, Role::YenX);
         assert_eq!(s.mayer_k, 1);
         assert!(s.aff_equation);
+    }
+
+    fn br(code: u32, nom: &str, proba: &str) -> BrancheArbre {
+        BrancheArbre {
+            code,
+            nom: nom.into(),
+            proba: proba.into(),
+        }
+    }
+
+    #[test]
+    fn arbre_niveaux_terminaux() {
+        // arbre symétrique 2×2 : deux niveaux, quatre feuilles
+        let a = Arbre {
+            branches: vec![
+                br(1, "A", "0,5"),
+                br(2, "B", "0,5"),
+                br(11, "C", "0,6"),
+                br(12, "D", "0,4"),
+                br(21, "E", "0,2"),
+                br(22, "F", "0,8"),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(a.niveaux(), 2);
+        assert_eq!(a.terminaux(), vec!["11", "12", "21", "22"]);
+        // arbre asymétrique (manuel p. 64) : code 2 terminal direct
+        let a = Arbre {
+            branches: vec![
+                br(1, "", ""),
+                br(2, "Fausse route", "0,3"),
+                br(11, "A", ""),
+                br(12, "B", ""),
+                br(121, "A barre", "0,1"),
+                br(122, "B barre", "0,9"),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(a.niveaux(), 3);
+        assert_eq!(a.terminaux(), vec!["11", "121", "122", "2"]);
+    }
+
+    #[test]
+    fn arbre_draw_list_pieces() {
+        let a = Arbre {
+            titre: "Urne".into(),
+            branches: vec![br(1, "R", "0,6"), br(2, "&R", "0,4")],
+            omega: true,
+            sans_grille: true,
+            ..Default::default()
+        };
+        let pieces = a.draw_list(&Page::default());
+        // fond opaque sans grille, Ω, deux branches
+        assert!(pieces.iter().any(|p| matches!(p, Piece::Fond { .. })));
+        assert_eq!(
+            pieces
+                .iter()
+                .filter(|p| matches!(p, Piece::Ligne { .. }))
+                .count(),
+            2
+        );
+        assert!(pieces
+            .iter()
+            .any(|p| matches!(p, Piece::Texte { txt, .. } if txt == "Ω")));
+        // probabilités au milieu des branches
+        assert!(pieces
+            .iter()
+            .any(|p| matches!(p, Piece::Texte { txt, .. } if txt == "0,6")));
+        // nom complémentaire : barre par lettre (U+0305)
+        assert!(pieces
+            .iter()
+            .any(|p| matches!(p, Piece::Texte { txt, .. } if txt.contains('\u{305}'))));
+        // sans grille décochée : pas de fond ; Ω décoché : pas de Ω
+        let b = Arbre {
+            omega: false,
+            sans_grille: false,
+            ..a.clone()
+        };
+        assert!(!b
+            .draw_list(&Page::default())
+            .iter()
+            .any(|p| matches!(p, Piece::Fond { .. })));
+        assert!(!b
+            .draw_list(&Page::default())
+            .iter()
+            .any(|p| matches!(p, Piece::Texte { txt, .. } if txt == "Ω")));
+        // masqué
+        let m = Arbre {
+            dessiner: false,
+            ..a.clone()
+        };
+        assert!(m.draw_list(&Page::default()).is_empty());
+        // arbre vide ou sans branches : rien
+        assert!(Arbre::default().draw_list(&Page::default()).is_empty());
+    }
+
+    #[test]
+    fn arbre_json_defauts() {
+        // session antérieure (sans les champs v0.9) : Ω et sans-grille par défaut
+        let txt =
+            r#"{"titre":"T","branches":[{"code":1,"nom":"B","proba":"0,5"}],"dessiner":true}"#;
+        let a: Arbre = serde_json::from_str(txt).unwrap();
+        assert!(a.omega);
+        assert!(a.sans_grille);
+        assert!((a.epaisseur - 0.7).abs() < 1e-12);
+        assert_eq!(a.couleur, [0, 0, 204]);
     }
 
     #[test]

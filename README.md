@@ -45,6 +45,21 @@ sur les données, comme la droite de Henry).
 | Rendu | courbe de densité normalisée au pic + légende « Loi … : μ = …, σ = … » |
 | Interface | style « Loi de probabilité » (fenêtre Statistiques), panneau Calculs |
 
+## État v0.9 — arbres de probabilités (module v0.9)
+
+Le module arbres pondérés (manuel p. 62–64) est porté : grille
+code / nom / probabilité, niveaux à largeur égale, terminaux répartis
+à hauteur égale, Ω au pied, « sans grille ».
+
+| Inclus | Détail |
+|---|---|
+| Données | liste de branches `BrancheArbre { code, nom, proba }` (code 3× = 1ᵉʳ niveau, 32 = 2ᵉ branche issue de 3, 341 = 1ʳᵉ issue de 34…) |
+| Noms | texte libre ; préfixe `&` = barre horizontale au-dessus du nom (Ā) |
+| Probabilités | nombre décimal ou texte quelconque (0,5 ; p ; 1 p) |
+| Layout | niveaux à largeur égale sur la page, terminaux triés alphabétiquement, hauteur répartie également, parents = moyenne des filles, pied = moyenne du niveau 1 |
+| Options | Ω (univers des possibles), « effacer la grille et les axes » (cochée par défaut = fond opaque pleine page), couleur, épaisseur |
+| Interface | section « Arbres de probabilités » du panneau latéral + éditeur (grille code/nom/proba, exemple du manuel, aperçu niveaux/feuilles) |
+
 ## État v0.8 — statistiques à 2 variables (module v0.8)
 
 Le module nuage de points / régressions (manuel p. 52–54) est porté :
@@ -214,6 +229,9 @@ git tag v0.2.0 && git push --tags     # build + release automatiques
 - ✅ v0.8 — statistiques à 2 variables (module v0.8) : nuage de points,
   8 régressions (moindres carrés pondérés, Mayer, polynômes *), rôles y/x,
   covariance, corrélation + corrélation corrigée
+- ✅ v0.9 — arbres de probabilités (module v0.9) : grille code/nom/probabilité
+  (préfixe & = barre), niveaux à largeur égale + terminaux à hauteur égale,
+  Ω au pied, « sans grille »
 - ⬜ extrema et zéros automatiques
 - ⬜ exports BMP/GIF/EMF/EPS/LaTeX, courbes de Bézier, préférences, impression
 

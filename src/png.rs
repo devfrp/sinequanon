@@ -338,6 +338,8 @@ const GLYPHES: &[(char, Glyphe)] = &[
     ('î', [0x0A, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04]),
     ('ï', [0x0A, 0x0A, 0x04, 0x04, 0x04, 0x04, 0x04]),
     ('ç', [0x00, 0x00, 0x0F, 0x10, 0x10, 0x0F, 0x04]),
+    // Ω (univers des possibles, arbres de probabilités)
+    ('Ω', [0x0E, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x1F]),
 ];
 
 /// Lettres accentuées : (caractère, base, 2 lignes d'accent au-dessus).
@@ -544,6 +546,13 @@ impl Raster {
         let u = echelle(size_px);
         let mut cx = x;
         for ch in s.chars() {
+            if ch == '\u{305}' {
+                // marque combinante U+0305 : surligne (barre au-dessus
+                // de la casse) sur la cellule précédente, sans avance
+                let (bx, by) = (cx - 6.0 * u, y - 9.0 * u);
+                self.rect(bx, by, 6.0 * u, 2.0 * u, c);
+                continue;
+            }
             let (base, acc) = match ACCENTS.iter().find(|(a, _, _)| *a == ch) {
                 Some((_, b, acc)) => (*b, Some(*acc)),
                 None => (ch, None),
