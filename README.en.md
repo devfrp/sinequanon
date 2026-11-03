@@ -44,17 +44,20 @@ Henry line).
 | Rendering | density curve normalized to its peak + legend "Law … : μ = …, σ = …" |
 | Interface | "Probability law" style (statistics window), Calculs panel |
 
-## v0.6 status — numeric sequences (module v0.6)
+## v0.7 status — numeric sequences, full parity (module v0.7)
 
-The **numeric sequences** module is ported: sequences of the form `u_n = f(n)`
-(staircase) and recurrence-defined sequences `u_{n+1} = f(u_n)` (spider web)
-are modelled through the `n`/`u` variables and traced on the index/value axes.
+The **numeric sequences** module reaches parity with the original (manual
+p. 75–76): sequences `u_n = f(n)` (staircase) and recurrence sequences
+`u_{n+1} = f(u_n)` (spider web) are entered **using the variable x** as in
+the original, with adjustable first index and first term.
 
 | Included | Details |
 |---|---|
-| Sequences | `u_n = f(n)` (explicit) and `u_{n+1} = f(u_n)` (recurrence) — terms and staircase |
-| Rendering | staircase / iterations + legend (`u_n = …` / `u_{n+1} = …`) |
-| Interface | statistics window: « ➕ Sequence » button, drawing |
+| Sequences | `u_n = f(n)` (explicit) and `u_{n+1} = f(u_n)` (recurrence) |
+| Variables | `x` (original syntax); v0.6 `n`/`u` still accepted |
+| Settings | first index n₀ and first term u₀ (default 0, as in the original) |
+| Rendering | staircase (explicit); spider web: `y = x` diagonal, `y = f(x)` curve, cobweb — in the page's coordinate system |
+| Interface | « Suites » side-panel section: add, edit, hide, delete |
 
 ## v0.3 status — sign and variation tables
 
@@ -190,6 +193,8 @@ git tag v0.2.0 && git push --tags     # automatic build + release
   Poisson, exponential) + rendering (style "Probability law")
 - ✅ v0.6 — numeric sequences (module v0.6): explicit sequences `u_n = f(n)`
   (staircase) and recurrence sequences `u_{n+1} = f(u_n)` (spider web)
+- ✅ v0.7 — sequences v2: full parity (variable `x`, first index n₀,
+  first term u₀, true spider web in the coordinate system, GUI editor)
 - ⬜ automatic extrema and zeros
 - ⬜ BMP/GIF/EMF/EPS/LaTeX exports, Bézier curves, preferences, printing
 

@@ -53,6 +53,8 @@ pub struct SqApp {
     pub boites: Vec<crate::stats::BoitesMultiples>,
     /// suites numériques (v0.6+)
     pub suites: Vec<crate::stats::Suite>,
+    /// fenêtre d'édition ouverte : index de la suite
+    pub suite_sel: Option<usize>,
     /// fenêtre d'édition ouverte : index de la série statistique
     pub stat_sel: Option<usize>,
     /// volet actif de la fenêtre statistique (0..=3)
@@ -125,6 +127,7 @@ impl SqApp {
             stats,
             boites,
             suites: Vec::new(),
+            suite_sel: None,
             stat_sel: None,
             stat_volet: 0,
             tab_sel: None,
@@ -212,6 +215,8 @@ impl SqApp {
                         self.section_tableaux(ui);
                         ui.separator();
                         self.section_statistiques(ui);
+                        ui.separator();
+                        self.section_suites(ui);
                         ui.separator();
                         self.section_repere(ui);
                         ui.separator();
@@ -882,6 +887,165 @@ impl SqApp {
         }
     }
 
+    /// Section « Suites » du panneau latéral (v0.7) : ajout, liste
+    /// cliquant-ouvrant l'éditeur, masquage et suppression.
+    fn section_suites(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.horizontal(|ui| {
+            ui.strong(t.suites);
+            if ui.button(t.st_aj_suite).clicked() {
+                self.suites.push(stats::Suite {
+                    titre: format!("Suite {}", self.suites.len() + 1),
+                    def: stats::SuiteDef::Lineaire { f: "2x+1".into() },
+                    dessiner: true,
+                    n0: 0,
+                    u0: 0.0,
+                });
+                self.suite_sel = Some(self.suites.len() - 1);
+                self.dirty = true;
+            }
+        });
+        let mut to_delete: Option<usize> = None;
+        let mut to_toggle: Option<usize> = None;
+        for (i, s) in self.suites.iter().enumerate() {
+            let label = if s.titre.is_empty() {
+                format!("{} {}", t.suites, i + 1)
+            } else {
+                s.titre.lines().next().unwrap_or("").to_string()
+            };
+            ui.horizontal(|ui| {
+                let vis = if s.dessiner { "\u{25c9}" } else { "\u{25cb}" };
+                if ui
+                    .add(egui::Label::new(RichText::new(vis).size(16.0)).sense(Sense::click()))
+                    .clicked()
+                {
+                    to_toggle = Some(i);
+                }
+                let caption = match &s.def {
+                    stats::SuiteDef::Lineaire { f } => format!("{label} — u_n = {f}"),
+                    stats::SuiteDef::Recurrence { f } => format!("{label} — u_(n+1) = {f}"),
+                };
+                if ui
+                    .add(egui::Label::new(RichText::new(caption).small()).sense(Sense::click()))
+                    .clicked()
+                {
+                    self.suite_sel = Some(i);
+                }
+                if ui.small_button("\u{2715}").clicked() {
+                    to_delete = Some(i);
+                }
+            });
+        }
+        if let Some(i) = to_toggle {
+            if let Some(s) = self.suites.get_mut(i) {
+                s.dessiner = !s.dessiner;
+                self.dirty = true;
+            }
+        }
+        if let Some(i) = to_delete {
+            self.suites.remove(i);
+            self.suite_sel = None;
+            self.dirty = true;
+        }
+        if self.suites.is_empty() {
+            ui.label(RichText::new(t.aucune).weak().small());
+        }
+    }
+
+    /// Fenêtre d'édition d'une suite (v0.7) : titre, type, formule
+    /// (variable x comme l'original, n/u restent acceptés), premier
+    /// indice et premier terme u₀.
+    fn fenetre_suite(&mut self, ctx: &egui::Context) {
+        let t = i18n::table(self.lang);
+        let Some(idx) = self.suite_sel else { return };
+        if self.suites.get(idx).is_none() {
+            self.suite_sel = None;
+            return;
+        }
+        let mut ouverte = true;
+        egui::Window::new(format!("{} — {}", t.suites, idx + 1))
+            .open(&mut ouverte)
+            .resizable(true)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                let dirty = &mut self.dirty;
+                let s = &mut self.suites[idx];
+                ui.horizontal(|ui| {
+                    ui.label(t.stat_titre);
+                    if ui
+                        .add(TextEdit::singleline(&mut s.titre).desired_width(200.0))
+                        .changed()
+                    {
+                        *dirty = true;
+                    }
+                    ui.checkbox(&mut s.dessiner, t.stat_dessiner);
+                });
+                ui.horizontal(|ui| {
+                    ui.label(t.suite_type);
+                    if ui
+                        .selectable_label(
+                            matches!(s.def, stats::SuiteDef::Lineaire { .. }),
+                            t.suite_expl,
+                        )
+                        .clicked()
+                        && !matches!(s.def, stats::SuiteDef::Lineaire { .. })
+                    {
+                        s.def = stats::SuiteDef::Lineaire { f: "2x+1".into() };
+                        *dirty = true;
+                    }
+                    if ui
+                        .selectable_label(
+                            matches!(s.def, stats::SuiteDef::Recurrence { .. }),
+                            t.suite_rec,
+                        )
+                        .clicked()
+                        && !matches!(s.def, stats::SuiteDef::Recurrence { .. })
+                    {
+                        s.def = stats::SuiteDef::Recurrence { f: "2x+1".into() };
+                        *dirty = true;
+                    }
+                });
+                match &mut s.def {
+                    stats::SuiteDef::Lineaire { f } | stats::SuiteDef::Recurrence { f } => {
+                        ui.horizontal(|ui| {
+                            ui.label(t.suite_f);
+                            if ui
+                                .add(
+                                    TextEdit::singleline(f)
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_width(180.0),
+                                )
+                                .changed()
+                            {
+                                *dirty = true;
+                            }
+                        });
+                    }
+                }
+                ui.horizontal(|ui| {
+                    ui.label(t.suite_n0);
+                    if ui
+                        .add(DragValue::new(&mut s.n0).range(0..=1e9 as usize))
+                        .changed()
+                    {
+                        *dirty = true;
+                    }
+                    if matches!(s.def, stats::SuiteDef::Recurrence { .. }) {
+                        ui.label(t.suite_u0);
+                        if ui
+                            .add(DragValue::new(&mut s.u0).speed(0.1).range(-1e12..=1e12))
+                            .changed()
+                        {
+                            *dirty = true;
+                        }
+                    }
+                });
+            });
+        if !ouverte {
+            self.suite_sel = None;
+        }
+    }
+
     fn section_repere(&mut self, ui: &mut Ui) {
         let t = i18n::table(self.lang);
         ui.strong(t.repere);
@@ -1463,17 +1627,6 @@ impl SqApp {
                 }
             }
         }
-        ui.horizontal(|ui| {
-            if ui.button(t.st_aj_suite).clicked() {
-                self.suites.push(stats::Suite {
-                    titre: format!("Suite {}", self.suites.len() + 1),
-                    def: stats::SuiteDef::Lineaire { f: "2n+1".into() },
-                    dessiner: true,
-                });
-                self.dirty = true;
-            }
-        });
-        ui.separator();
         // module probabilités (v0.5) : loi de probabilité affichée
         if s.style == Style::LoiProba {
             let loi = s.loi.or_else(|| {
@@ -2256,6 +2409,7 @@ impl eframe::App for SqApp {
         self.fenetre_tableau(ctx);
         self.fenetre_genere(ctx);
         self.fenetre_stat(ctx);
+        self.fenetre_suite(ctx);
         // sauvegarde automatique si nécessaire
         if self.dirty {
             let s = Session {

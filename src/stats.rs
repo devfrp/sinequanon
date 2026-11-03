@@ -1850,15 +1850,23 @@ pub enum SuiteDef {
 }
 
 impl SuiteDef {
-    /// Évalue `f` (variable `var`) en `v`.
+    /// Évalue `f` en `v`. L'original saisit `f` avec la variable `x`
+    /// (p. 75) : `x` vaut ici l'arguement courant (l'indice pour une
+    /// suite explicite, u_n pour une récurrence). Les variables `n`
+    /// (explicite) et `u` (récurrence) de la v0.6 restent acceptées.
     fn eval_f(f: &str, var: &str, v: f64) -> Option<f64> {
         let ast = crate::expr::parse(f).ok()?;
-        ast.validate_vars(&[var]).ok()?;
+        ast.validate_vars(&["x", var]).ok()?;
         let mut vars = crate::expr::VarSet::default();
-        if var == "n" {
-            vars.n = Some(v);
-        } else {
-            vars.u = Some(v);
+        match var {
+            "n" => {
+                vars.n = Some(v);
+                vars.x = Some(v);
+            }
+            _ => {
+                vars.u = Some(v);
+                vars.x = Some(v);
+            }
         }
         Some(ast.eval(&vars, &mut Vec::new()))
     }
@@ -1870,27 +1878,6 @@ impl SuiteDef {
             SuiteDef::Recurrence { .. } => None,
         }
     }
-
-    /// Termes de la suite : pour `Lineaire` les u_n (n = 0..) ; pour
-    /// `Recurrence` les itérations successives depuis u_0 = 0.
-    pub fn termes(&self, n: usize) -> Vec<f64> {
-        let mut out = Vec::with_capacity(n);
-        match self {
-            SuiteDef::Lineaire { .. } => {
-                for k in 0..n {
-                    out.push(self.valeur(k as f64).unwrap_or(f64::NAN));
-                }
-            }
-            SuiteDef::Recurrence { f } => {
-                let mut u = 0.0f64;
-                for _ in 0..n {
-                    out.push(u);
-                    u = Self::eval_f(f, "u", u).unwrap_or(f64::NAN);
-                }
-            }
-        }
-        out
-    }
 }
 
 /// Une suite numérique (module statistiques v0.6).
@@ -1899,28 +1886,67 @@ pub struct Suite {
     pub titre: String,
     pub def: SuiteDef,
     pub dessiner: bool,
+    /// indice du premier terme (v0.7+, défaut 0) ; les deux types,
+    /// comme l'original (« le premier terme a pour indice 2 », p. 75)
+    #[serde(default)]
+    pub n0: usize,
+    /// valeur du premier terme des suites récurrentes (défaut 0, comme
+    /// l'original : « u₀ n'étant pas indiquée, on considère que u₀ = 0 »)
+    #[serde(default)]
+    pub u0: f64,
 }
 
 impl Suite {
+    /// Indices et valeurs des `count` premiers termes : pour
+    /// `Lineaire` les u_n (n = n0..) ; pour `Recurrence` les
+    /// itérations successives depuis u₀ = `self.u0` (v0.7).
+    pub fn termes(&self, count: usize) -> Vec<(f64, f64)> {
+        match &self.def {
+            SuiteDef::Lineaire { .. } => (0..count)
+                .map(|k| {
+                    let i = (self.n0 + k) as f64;
+                    (i, self.def.valeur(i).unwrap_or(f64::NAN))
+                })
+                .collect(),
+            SuiteDef::Recurrence { f } => {
+                let mut u = self.u0;
+                (0..count)
+                    .map(|k| {
+                        let i = (self.n0 + k) as f64;
+                        let v = u;
+                        u = SuiteDef::eval_f(f, "u", v).unwrap_or(f64::NAN);
+                        (i, v)
+                    })
+                    .collect()
+            }
+        }
+    }
+
     /// Dessin : escalier (u_n = f(n)) ou toile d'araignée (itérations de
-    /// la récurrence), avec légende.
+    /// la récurrence : courbe y = f(x), diagonale y = x, cobweb), avec
+    /// légende.
     pub fn draw_list(&self, p: &Page) -> Vec<Piece> {
         if !self.dessiner || !p.mm_x(0.0).is_finite() || !p.mm_y(0.0).is_finite() {
             return Vec::new();
         }
-        let termes = self.def.termes(NB_TERME);
-        if termes.iter().any(|v| v.is_nan()) {
+        match &self.def {
+            SuiteDef::Lineaire { f } => self.dessin_escalier(p, f),
+            SuiteDef::Recurrence { f } => self.dessin_toile(p, f),
+        }
+    }
+
+    /// Escalier de la suite explicite : segments (n, u_n)
+    /// (n+1, u_{n+1}) puis paliers horizontaux ; légende « u_n = f ».
+    fn dessin_escalier(&self, p: &Page, f: &str) -> Vec<Piece> {
+        let termes = self.termes(NB_TERME);
+        if termes.iter().any(|(_, v)| v.is_nan()) {
             // expression invalide : rien à tracer
             return Vec::new();
         }
-        let (f, recurrence) = match &self.def {
-            SuiteDef::Lineaire { f } => (f.clone(), false),
-            SuiteDef::Recurrence { f } => (f.clone(), true),
-        };
-        let mut out = Vec::new();
-        for i in 0..termes.len().saturating_sub(1) {
-            let (x0, y0) = (p.mm_x(i as f64), p.mm_y(termes[i]));
-            let (x1, y1) = (p.mm_x((i + 1) as f64), p.mm_y(termes[i + 1]));
+        let mut out = pieces_axes(p, true, true, true);
+        for w in termes.windows(2) {
+            let (x0, y0) = (p.mm_x(w[0].0), p.mm_y(w[0].1));
+            let (x1, y1) = (p.mm_x(w[1].0), p.mm_y(w[1].1));
             out.push(Piece::Ligne {
                 x0,
                 y0,
@@ -1938,14 +1964,107 @@ impl Suite {
                 w: 0.7,
             });
         }
-        let caption = if recurrence {
-            format!("u_{{n+1}} = {f}")
-        } else {
-            format!("u_n = {f}")
-        };
         out.push(Piece::Texte {
             mm: (p.width_mm / 2.0, p.height_mm - 4.6),
-            txt: caption,
+            txt: format!("u_n = {f}"),
+            c: NOIR,
+            taille: 2.4,
+            ancre: "middle",
+            vertical: false,
+            gras: false,
+            italique: false,
+        });
+        out
+    }
+
+    /// Toile d'araignée (récurrence u_{n+1} = f(u_n), comme l'original
+    /// p. 76), dans le repère de la page comme les autres dessins :
+    /// axes cotés (pieces_axes), diagonale y = x, courbe y = f(x),
+    /// cobweb de (u₀, 0) par montées sur la courbe et paliers vers la
+    /// diagonale ; légende « u_{n+1} = f ».
+    fn dessin_toile(&self, p: &Page, f: &str) -> Vec<Piece> {
+        let termes = self.termes(NB_TERME);
+        // valeurs finies du cobweb (on cesse à la première non finie)
+        let mut vals: Vec<f64> = Vec::with_capacity(termes.len());
+        for &(_, v) in &termes {
+            if !v.is_finite() {
+                break;
+            }
+            vals.push(v);
+        }
+        if vals.len() < 2 {
+            return Vec::new();
+        }
+        // bornes en u pour la diagonale, la courbe et le web
+        let mut lo = vals.iter().fold(0.0f64, |a, &v| a.min(v));
+        let mut hi = vals.iter().fold(0.0f64, |a, &v| a.max(v));
+        if hi - lo < 1e-9 {
+            lo -= 1.0;
+            hi += 1.0;
+        }
+        let mut out = pieces_axes(p, true, true, true);
+        // comme l'original : pas de grand titre sur le graphique, la
+        // légende « u_{n+1} = f » suffit
+        // diagonale y = x (trait fin gris)
+        out.push(Piece::Ligne {
+            x0: p.mm_x(lo),
+            y0: p.mm_y(lo),
+            x1: p.mm_x(hi),
+            y1: p.mm_y(hi),
+            c: GRIS_AXE,
+            w: 0.35,
+        });
+        // courbe y = f(x) échantillonnée sur la fenêtre
+        let mut pts = Vec::new();
+        let n = 160;
+        for i in 0..=n {
+            let x = lo + (hi - lo) * i as f64 / n as f64;
+            let y = SuiteDef::eval_f(f, "u", x).filter(|v| v.is_finite());
+            match y {
+                Some(y) => pts.push((p.mm_x(x), p.mm_y(y))),
+                None => {
+                    if pts.len() >= 2 {
+                        out.push(Piece::Poly {
+                            pts: std::mem::take(&mut pts),
+                            fill: None,
+                            stroke: Some((NOIR, 0.7)),
+                        });
+                    }
+                    pts.clear();
+                }
+            }
+        }
+        if pts.len() >= 2 {
+            out.push(Piece::Poly {
+                pts,
+                fill: None,
+                stroke: Some((NOIR, 0.7)),
+            });
+        }
+        // cobweb : de (u₀, 0) sur l'axe, montée sur la courbe (u₀, u₁),
+        // palier jusqu'à la diagonale (u₁, u₁), etc.
+        for i in 0..vals.len() - 1 {
+            let dep = if i == 0 { 0.0 } else { vals[i] };
+            out.push(Piece::Ligne {
+                x0: p.mm_x(vals[i]),
+                y0: p.mm_y(dep),
+                x1: p.mm_x(vals[i]),
+                y1: p.mm_y(vals[i + 1]),
+                c: NOIR,
+                w: 0.7,
+            });
+            out.push(Piece::Ligne {
+                x0: p.mm_x(vals[i]),
+                y0: p.mm_y(vals[i + 1]),
+                x1: p.mm_x(vals[i + 1]),
+                y1: p.mm_y(vals[i + 1]),
+                c: NOIR,
+                w: 0.7,
+            });
+        }
+        out.push(Piece::Texte {
+            mm: (p.width_mm / 2.0, p.height_mm - 4.6),
+            txt: format!("u_{{n+1}} = {f}"),
             c: NOIR,
             taille: 2.4,
             ancre: "middle",
@@ -2177,54 +2296,133 @@ mod tests {
         );
     }
 
+    fn s_suite(def: SuiteDef) -> Suite {
+        Suite {
+            titre: "S".into(),
+            def,
+            dessiner: true,
+            n0: 0,
+            u0: 0.0,
+        }
+    }
+
     #[test]
     fn suite_lineaire_termes() {
         let d = SuiteDef::Lineaire { f: "2n+1".into() };
         assert_eq!(d.valeur(3.0), Some(7.0));
-        let termes = d.termes(5);
+        let mut s = s_suite(d);
+        let termes = s.termes(5);
         assert_eq!(termes.len(), 5);
-        assert_eq!(termes[0], 1.0);
-        assert_eq!(termes[4], 9.0);
+        assert_eq!(termes[0], (0.0, 1.0));
+        assert_eq!(termes[4], (4.0, 9.0));
+        // premier indice n0 (v0.7, comme l'original p. 75)
+        s.n0 = 2;
+        let termes = s.termes(3);
+        assert_eq!(termes[0], (2.0, 5.0));
+        assert_eq!(termes[2], (4.0, 9.0));
     }
 
     #[test]
     fn suite_recurrente_termes() {
-        let d = SuiteDef::Recurrence { f: "u+1".into() };
-        let termes = d.termes(5);
+        let mut s = s_suite(SuiteDef::Recurrence { f: "u+1".into() });
+        let termes = s.termes(5);
         assert_eq!(termes.len(), 5);
-        assert_eq!(termes[0], 0.0);
-        assert_eq!(termes[4], 4.0);
+        assert_eq!(termes[0], (0.0, 0.0));
+        assert_eq!(termes[4], (4.0, 4.0));
+        // premier terme u₀ (v0.7, comme l'original p. 76)
+        s.u0 = 2.0;
+        let termes = s.termes(4);
+        assert_eq!(termes[0], (0.0, 2.0));
+        assert_eq!(termes[3], (3.0, 5.0));
+    }
+
+    #[test]
+    fn suite_variable_x_comme_original() {
+        // l'original saisit f avec la variable x (p. 75)
+        let s = s_suite(SuiteDef::Lineaire { f: "2x+1".into() });
+        let termes = s.termes(3);
+        assert_eq!(termes[1], (1.0, 3.0));
+        // récurrence avec x = u_n (ex. du manuel : u_{n+1} = 3u_n + 2)
+        let mut s = s_suite(SuiteDef::Recurrence { f: "3x+2".into() });
+        s.u0 = 0.0;
+        let termes = s.termes(3);
+        assert_eq!(termes[0], (0.0, 0.0));
+        assert_eq!(termes[1], (1.0, 2.0));
+        assert_eq!(termes[2], (2.0, 8.0));
+        // « u » reste accepté en récurrence (v0.6)
+        let mut s2 = s_suite(SuiteDef::Recurrence { f: "3u+2".into() });
+        s2.u0 = 0.0;
+        assert_eq!(s2.termes(3), termes);
+    }
+
+    #[test]
+    fn suite_n_variable_dans_suite_explicite() {
+        // « n » reste accepté en explicite (v0.6)
+        let s = s_suite(SuiteDef::Lineaire { f: "2n+1".into() });
+        assert_eq!(s.termes(2)[1], (1.0, 3.0));
+    }
+
+    #[test]
+    fn suite_json_v06_sans_ni_u0() {
+        // compat : une suite de session v0.6 charge ses défauts
+        let txt = r#"{"titre":"Suite 1","def":{"Lineaire":{"f":"2n+1"}},"dessiner":true}"#;
+        let s: Suite = serde_json::from_str(txt).unwrap();
+        assert_eq!(s.n0, 0);
+        assert_eq!(s.u0, 0.0);
     }
 
     #[test]
     fn suite_invalide_dessine_vide() {
-        let s = Suite {
-            titre: "S".into(),
-            def: SuiteDef::Lineaire { f: "2++".into() },
-            dessiner: true,
-        };
+        let s = s_suite(SuiteDef::Lineaire { f: "2++".into() });
+        assert!(s.draw_list(&Page::default()).is_empty());
+        let s = s_suite(SuiteDef::Recurrence { f: "3x+".into() });
         assert!(s.draw_list(&Page::default()).is_empty());
     }
 
     #[test]
     fn suite_dessine_escalier() {
-        let s = Suite {
-            titre: "Suite 1".into(),
-            def: SuiteDef::Lineaire { f: "2n+1".into() },
-            dessiner: true,
-        };
+        let s = s_suite(SuiteDef::Lineaire { f: "2n+1".into() });
         let pieces = s.draw_list(&Page::default());
         assert!(!pieces.is_empty());
         assert!(pieces.iter().any(|p| matches!(p, Piece::Ligne { .. })));
     }
 
     #[test]
-    fn suite_dessiner_fausse_vide() {
-        let s = Suite {
-            titre: "S".into(),
-            def: SuiteDef::Lineaire { f: "2n+1".into() },
-            dessiner: false,
-        };
+    fn suite_toile_daraignee() {
+        // u_{n+1} = 2x+1 / 2 : u₀=0, converge vers 1... testons la
+        // structure : diagonale, courbe, cobweb, axes cotés
+        let mut s = s_suite(SuiteDef::Recurrence { f: "x/2+1".into() });
+        s.u0 = 0.0;
+        let pieces = s.draw_list(&Page::default());
+        assert!(!pieces.is_empty(), "toile vide");
+        // la légende récurrence est affichée
+        assert!(pieces
+            .iter()
+            .any(|p| matches!(p, Piece::Texte { txt, .. } if txt.contains("u_{n+1}"))));
+        // il y a un polygone plein pour la courbe échantillonnée
+        assert!(pieces.iter().any(|p| matches!(p, Piece::Poly { .. })));
+        // le cobweb démarre sous l'axe (segment vertical depuis u₀ = 0)
+        let lignes: Vec<&Piece> = pieces
+            .iter()
+            .filter(|p| matches!(p, Piece::Ligne { .. }))
+            .collect();
+        assert!(lignes.len() >= 2, "{} lignes", lignes.len());
+    }
+
+    #[test]
+    fn suite_toile_vide_si_nombre_de_termes_insuffisant() {
+        // récurrence divergeant : les valeurs finies s'arrêtent vite
+        // (explosion en f64) — au pire le dessin reste non vide ;
+        // vérifions juste qu'une constant vaut au moins 2 valeurs
+        let mut s = s_suite(SuiteDef::Recurrence { f: "1".into() });
+        s.u0 = 3.0;
+        assert!(!s.draw_list(&Page::default()).is_empty());
+    }
+
+    #[test]
+    fn suite_dessiner_faux_vide() {
+        let mut s = s_suite(SuiteDef::Lineaire { f: "2n+1".into() });
+        s.dessiner = false;
         assert!(s.draw_list(&Page::default()).is_empty());
     }
 
