@@ -228,9 +228,32 @@ git tag v0.2.0 && git push --tags     # automatic build + release
 - ✅ v0.8 — 2-variable statistics (module v0.8): scatter plots, 8 regressions
   (weighted least squares, Mayer, polynomials *), y/x roles, covariance,
   correlation + corrected correlation
+## v1.0 status — statistical simulations (simu module)
+
+The simulations module (manual p. 65–74) is ported: 7 models,
+4 chart types, automatic scaling, theoretical curves and fluctuation.
+
+| Included | Details |
+|---|---|
+| Models | discrete uniform [min;max], continuous uniform, Bernoulli (p), binomial B(n;p), geometric (first success), Poisson (λ), normal (μ;σ) |
+| Generator | dependency-free xorshift64* (no `rand`): seed 0 = neutral seed, draws are replayed bit-exact at export time |
+| Size / count | up to 1,000 samples of 10,000 draws (panel bounds) |
+| Charts | points (mean fluctuation), histograms (one band per sample), pooled histogram, box plots (one per sample) |
+| Discrete bars | one bar per value for discrete laws (die: 6 bars, Bernoulli: 2 bars); class spread applies to continuous laws only (man. p. 67–68) |
+| Theoretical | mean line (points), theoretical count (histograms, 50/6 for a die), density curve (pooled) |
+| Fluctuation | mean ± 1.96 √(p(1−p)/n) at 95% (Bernoulli only, man. p. 71) |
+| Auto scale | the « Lancer » button re-seeds (clock) and fits both axes from the chart's range |
+| Panel | pooled grid: count, mean, standard deviation, min, max over all draws |
+
 - ✅ v0.9 — probability trees (module v0.9): code/name/probability grid
   (& prefix = bar), levels of equal width + evenly spread terminals,
   Ω at the root, « no grid »
+- ✅ v1.0 — statistical simulations (simu module): 7 probability models,
+  4 charts (points / histograms / pooled histogram / boxes), one bar per
+  value for discrete laws, automatic scaling, theoretical curve, mean
+  fluctuation at 95%, seed-replayed identical draws
+  (The original « Séries ordonnées » checkbox only sorts the on-screen
+  data grid — no exported rendering — and is not ported.)
 - ⬜ automatic extrema and zeros
 - ⬜ BMP/GIF/EMF/EPS/LaTeX exports, Bézier curves, preferences, printing
 

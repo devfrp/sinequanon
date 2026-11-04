@@ -42,6 +42,10 @@ pub struct Session {
     /// arbres de probabilités (v0.9+)
     #[serde(default)]
     pub arbres: Vec<crate::stats::Arbre>,
+    /// simulations statistiques (v1.0+) ; les tirages ne sont pas
+    /// enregistrés : la graine les rejoue à l'identique
+    #[serde(default)]
+    pub simus: Vec<crate::simu::Simulation>,
 }
 
 /// Chemin du fichier de session selon la plateforme.
@@ -102,6 +106,7 @@ mod tests {
             suites: vec![],
             serie2: vec![],
             arbres: vec![],
+            simus: vec![],
         };
         let txt = serde_json::to_string(&s).unwrap();
         let back: Session = serde_json::from_str(&txt).unwrap();

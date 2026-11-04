@@ -211,6 +211,23 @@ git tag v0.2.0 && git push --tags     # build + release automatiques
   `src/png.rs` raster + encodeur + police bitmap 5×7 · `src/i18n.rs`
   bilinguisme · `src/app.rs` interface · `src/session.rs` sauvegarde JSON.
 
+## État v1.0 — simulations statistiques (module simu)
+
+Le module simulations (manuel p. 65–74) est porté : 7 modèles,
+4 graphiques, échelle automatique, cours théorique et fluctuation.
+
+| Inclus | Détail |
+|---|---|
+| Modèles | uniforme discrète [min;max], uniforme continue, Bernoulli (p), binomiale B(n;p), géométrique (1ᵉʳ succès), Poisson (λ), normale (μ;σ) |
+| Générateur | xorshift64* sans dépendance (sans `rand`) ; graine « 0 » = graine neutre : les tirages sont rejoués à l'identique à l'export |
+| Taille / nombre | jusqu'à 1 000 × 10 000 ajustements (bornes du panneau) |
+| Graphiques | points (fluctuation des moyennes), histogrammes (une bande par échantillon), histogramme de l'ensemble, boîtes à moustaches (une par échantillon) |
+| Barres discrètes | une barre par valeur pour les lois discrètes (dé : 6 barres, Bernoulli : 2 barres) ; la répartition en classes ne s'applique qu'aux lois continues (man. p. 67–68) |
+| Théorique | ligne de la moyenne (points), effectif théorique (histogrammes, 50/6 pour un dé), courbe de densité (ensemble) |
+| Fluctuation | mean +/- 1,96 √(p(1−p)/n) à 95 % (Bernoulli uniquement, man. p. 71) |
+| Échelle auto | le bouton « Lancer » resème (horloge) et règle l'échelle des 2 axes du repère depuis la plage du graphique |
+| Panneau | grille générale : effectif, moyenne, écart type, min, max sur l'ensemble des tirages |
+
 ## Feuille de route (parité option par option avec l'original 2.9.4)
 
 - ✅ v0.1 — cœur traceur : courbes, repère, grille 5 × 5 mm, SVG/PNG, session
@@ -232,6 +249,12 @@ git tag v0.2.0 && git push --tags     # build + release automatiques
 - ✅ v0.9 — arbres de probabilités (module v0.9) : grille code/nom/probabilité
   (préfixe & = barre), niveaux à largeur égale + terminaux à hauteur égale,
   Ω au pied, « sans grille »
+- ✅ v1.0 — simulations statistiques (module simu) : 7 modèles probabilistes,
+  4 graphiques (points / histogrammes / histogramme de l'ensemble / boîtes),
+  barres par valeur pour les lois discrètes, échelle automatique, courbe
+  théorique, fluctuation des moyennes à 95 %, graine rejouée à l'identique
+  (Le bouton « Séries ordonnées » de l'original ne concerne que la grille
+  de données du GUI — aucun rendu exporté — et n'est pas porté.)
 - ⬜ extrema et zéros automatiques
 - ⬜ exports BMP/GIF/EMF/EPS/LaTeX, courbes de Bézier, préférences, impression
 

@@ -624,7 +624,7 @@ fn num_pct(p: f64) -> String {
 
 /// Nombre d'axe : 4 chiffres significatifs au plus, zéros tronqués,
 /// virgule décimale (« 700 », « 0,5 », « 1050 ») comme l'original.
-fn num_axe(v: f64) -> String {
+pub(crate) fn num_axe(v: f64) -> String {
     if !v.is_finite() {
         return String::new();
     }
@@ -1682,7 +1682,7 @@ impl BoitesMultiples {
 }
 
 /// Titre centré en haut de la page (partagé par tous les dessins).
-fn titre_piece(p: &Page, titre: &str) -> Option<Piece> {
+pub(crate) fn titre_piece(p: &Page, titre: &str) -> Option<Piece> {
     if titre.is_empty() {
         return None;
     }

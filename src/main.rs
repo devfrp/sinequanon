@@ -14,6 +14,7 @@ mod i18n;
 mod png;
 mod render;
 mod session;
+mod simu;
 mod stats;
 mod tabgen;
 mod tableau;
@@ -138,6 +139,8 @@ struct Opts {
     serie2: Vec<stats::Serie2>,
     /// arbres de probabilités (v0.9+)
     arbres: Vec<stats::Arbre>,
+    /// simulations statistiques (v1.0+)
+    simus: Vec<crate::simu::Simulation>,
 }
 
 impl Default for Opts {
@@ -160,6 +163,7 @@ impl Default for Opts {
             suites: Vec::new(),
             serie2: Vec::new(),
             arbres: Vec::new(),
+            simus: Vec::new(),
         }
     }
 }
@@ -242,6 +246,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
                 o.suites = s.suites;
                 o.serie2 = s.serie2;
                 o.arbres = s.arbres;
+                o.simus = s.simus;
             }
             "--svg" => o.svg = Some(valeur(args, &mut i, a)?),
             "--png" => o.png = Some(valeur(args, &mut i, a)?),
@@ -289,6 +294,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
         && o.suites.is_empty()
         && o.serie2.is_empty()
         && o.arbres.is_empty()
+        && o.simus.is_empty()
     {
         return Err(
             "aucune courbe ni série statistique : utilisez -f, -p, -c ou --session (voir --aide)"
@@ -340,6 +346,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.suites,
             &o.serie2,
             &o.arbres,
+            &o.simus,
             &PathBuf::from(svg),
         )
         .map_err(|e| format!("écriture de {svg} : {e}"))?;
@@ -355,6 +362,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.suites,
             &o.serie2,
             &o.arbres,
+            &o.simus,
             &PathBuf::from("sinequanon.svg"),
         )
         .map_err(|e| format!("écriture de sinequanon.svg : {e}"))?;
@@ -371,6 +379,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.suites,
             &o.serie2,
             &o.arbres,
+            &o.simus,
             o.px_par_mm,
             &PathBuf::from(png),
         )

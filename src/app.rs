@@ -8,6 +8,7 @@ use crate::grid::Page;
 use crate::i18n::{self, Lang};
 use crate::render::{self, CurvePolys};
 use crate::session::{self, Session};
+use crate::simu::{Graphique, Modele, Simulation};
 use crate::stats::{
     self, Arbre, BoitesMultiples, BrancheArbre, Donnees, Loi, Piece as PieceStats, Reg, Role,
     Style, Visualiser,
@@ -66,6 +67,10 @@ pub struct SqApp {
     pub arbres: Vec<Arbre>,
     /// fenêtre d'édition ouverte : index de l'arbre
     pub arbre_sel: Option<usize>,
+    /// simulations statistiques (v1.0+)
+    pub simus: Vec<Simulation>,
+    /// fenêtre d'édition ouverte : index de la simulation
+    pub simu_sel: Option<usize>,
     /// fenêtre d'édition ouverte : index de la série statistique
     pub stat_sel: Option<usize>,
     /// volet actif de la fenêtre statistique (0..=3)
@@ -155,6 +160,8 @@ impl SqApp {
             serie2_sel: None,
             arbres: Vec::new(),
             arbre_sel: None,
+            simus: Vec::new(),
+            simu_sel: None,
             stat_sel: None,
             stat_volet: 0,
             tab_sel: None,
@@ -248,6 +255,8 @@ impl SqApp {
                         self.section_serie2(ui);
                         ui.separator();
                         self.section_arbres(ui);
+                        ui.separator();
+                        self.section_simulations(ui);
                         ui.separator();
                         self.section_repere(ui);
                         ui.separator();
@@ -1375,6 +1384,297 @@ impl SqApp {
         }
     }
 
+    /// Liste des simulations statistiques (v1.0) dans le panneau latéral.
+    fn section_simulations(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.horizontal(|ui| {
+            ui.strong(t.simulations);
+            if ui.button(t.m_simu).clicked() {
+                self.simus.push(Simulation::default());
+                self.simu_sel = Some(self.simus.len() - 1);
+                self.dirty = true;
+            }
+        });
+        let mut to_delete: Option<usize> = None;
+        let mut to_toggle: Option<usize> = None;
+        for (i, s) in self.simus.iter().enumerate() {
+            let label = if s.titre.is_empty() {
+                format!("{} {}", t.simulations, i + 1)
+            } else {
+                s.titre.lines().next().unwrap_or("").to_string()
+            };
+            ui.horizontal(|ui| {
+                let vis = if s.dessiner { "\u{25c9}" } else { "\u{25cb}" };
+                if ui
+                    .add(egui::Label::new(RichText::new(vis).size(16.0)).sense(Sense::click()))
+                    .clicked()
+                {
+                    to_toggle = Some(i);
+                }
+                let caption = format!("{label} ({} × {})", s.taille, s.nombre);
+                if ui
+                    .add(egui::Label::new(RichText::new(caption).small()).sense(Sense::click()))
+                    .clicked()
+                {
+                    self.simu_sel = Some(i);
+                }
+                if ui.small_button("\u{2715}").clicked() {
+                    to_delete = Some(i);
+                }
+            });
+        }
+        if let Some(i) = to_toggle {
+            if let Some(s) = self.simus.get_mut(i) {
+                s.dessiner = !s.dessiner;
+                self.dirty = true;
+            }
+        }
+        if let Some(i) = to_delete {
+            self.simus.remove(i);
+            self.simu_sel = None;
+            self.dirty = true;
+        }
+        if self.simus.is_empty() {
+            ui.label(RichText::new(t.aucune).weak().small());
+        }
+    }
+
+    /// Fenêtre d'édition d'une simulation statistique (v1.0) : modèle et
+    /// réglages de la loi, graphique, taille / nombre / classes, courbe
+    /// théorique, intervalle de fluctuation (Bernoulli) ; bouton Lancer
+    /// (nouvelle graine + échelle automatique du repère, comme l'original)
+    /// et paramètres de l'ensemble des tirages.
+    fn fenetre_simulation(&mut self, ctx: &egui::Context) {
+        let t = i18n::table(self.lang);
+        let Some(idx) = self.simu_sel else {
+            return;
+        };
+        if self.simus.get(idx).is_none() {
+            self.simu_sel = None;
+            return;
+        }
+        let mut ouverte = true;
+        egui::Window::new(format!("{} — {}", t.simulations, idx + 1))
+            .open(&mut ouverte)
+            .resizable(true)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                let dirty = &mut self.dirty;
+                let sim = &mut self.simus[idx];
+                // titre + visibilité
+                ui.horizontal(|ui| {
+                    ui.label(t.stat_titre);
+                    let re = ui.add(TextEdit::singleline(&mut sim.titre).desired_width(200.0));
+                    ui.checkbox(&mut sim.dessiner, t.stat_dessiner);
+                    if re.changed() {
+                        *dirty = true;
+                    }
+                });
+                // modèle de tirage
+                let idx_mod = match sim.modele {
+                    Modele::UniformeDiscrete { .. } => 0,
+                    Modele::UniformeContinue { .. } => 1,
+                    Modele::Bernoulli { .. } => 2,
+                    Modele::Binomiale { .. } => 3,
+                    Modele::Geometrique { .. } => 4,
+                    Modele::Poisson { .. } => 5,
+                    Modele::Normale { .. } => 6,
+                };
+                let modes = [
+                    t.sim_uni_disc,
+                    t.sim_uni_cont,
+                    t.sim_bernoulli,
+                    t.sim_binomiale,
+                    t.sim_geometrique,
+                    t.sim_poisson,
+                    t.sim_normale,
+                ];
+                ComboBox::from_label(t.sim_modele)
+                    .selected_text(modes[idx_mod])
+                    .show_ui(ui, |ui| {
+                        for (j, l) in modes.iter().enumerate() {
+                            if ui.selectable_label(j == idx_mod, *l).clicked() && j != idx_mod {
+                                sim.modele = match j {
+                                    0 => Modele::UniformeDiscrete { min: 1, max: 6 },
+                                    1 => Modele::UniformeContinue { min: 0.0, max: 1.0 },
+                                    2 => Modele::Bernoulli { p: 0.5 },
+                                    3 => Modele::Binomiale { n: 10, p: 0.5 },
+                                    4 => Modele::Geometrique { p: 1.0 / 6.0 },
+                                    5 => Modele::Poisson { lambda: 4.0 },
+                                    _ => Modele::Normale {
+                                        mu: 0.0,
+                                        sigma: 1.0,
+                                    },
+                                };
+                                *dirty = true;
+                            }
+                        }
+                    });
+                // réglages propres à chaque loi
+                match &mut sim.modele {
+                    Modele::UniformeDiscrete { min, max } => {
+                        ui.horizontal(|ui| {
+                            ui.label(t.sim_min);
+                            if ui.add(DragValue::new(min).speed(1)).changed() {
+                                *dirty = true;
+                            }
+                            ui.label(t.sim_max);
+                            if ui.add(DragValue::new(max).speed(1)).changed() {
+                                *dirty = true;
+                            }
+                        });
+                    }
+                    Modele::UniformeContinue { min, max } => {
+                        ui.horizontal(|ui| {
+                            ui.label(t.sim_min);
+                            if ui.add(DragValue::new(min).speed(0.1)).changed() {
+                                *dirty = true;
+                            }
+                            ui.label(t.sim_max);
+                            if ui.add(DragValue::new(max).speed(0.1)).changed() {
+                                *dirty = true;
+                            }
+                        });
+                    }
+                    Modele::Bernoulli { p } | Modele::Geometrique { p } => {
+                        ui.horizontal(|ui| {
+                            ui.label(t.sim_p);
+                            if ui
+                                .add(DragValue::new(p).speed(0.01).range(0.0..=1.0))
+                                .changed()
+                            {
+                                *dirty = true;
+                            }
+                        });
+                    }
+                    Modele::Binomiale { n, p } => {
+                        ui.horizontal(|ui| {
+                            ui.label(t.sim_n);
+                            if ui
+                                .add(DragValue::new(n).speed(1).range(1..=10_000))
+                                .changed()
+                            {
+                                *dirty = true;
+                            }
+                            ui.label(t.sim_p);
+                            if ui
+                                .add(DragValue::new(p).speed(0.01).range(0.0..=1.0))
+                                .changed()
+                            {
+                                *dirty = true;
+                            }
+                        });
+                    }
+                    Modele::Poisson { lambda } => {
+                        ui.horizontal(|ui| {
+                            ui.label(t.sim_lambda);
+                            if ui
+                                .add(DragValue::new(lambda).speed(0.1).range(0.01..=1_000.0))
+                                .changed()
+                            {
+                                *dirty = true;
+                            }
+                        });
+                    }
+                    Modele::Normale { mu, sigma } => {
+                        ui.horizontal(|ui| {
+                            ui.label(t.sim_mu);
+                            if ui.add(DragValue::new(mu).speed(0.1)).changed() {
+                                *dirty = true;
+                            }
+                            ui.label(t.sim_sigma);
+                            if ui
+                                .add(DragValue::new(sigma).speed(0.05).range(0.01..=10_000.0))
+                                .changed()
+                            {
+                                *dirty = true;
+                            }
+                        });
+                    }
+                }
+                // taille, nombre d'échantillons, classes
+                ui.horizontal(|ui| {
+                    ui.label(t.sim_taille);
+                    if ui.add(DragValue::new(&mut sim.taille).speed(1)).changed() {
+                        *dirty = true;
+                    }
+                    ui.label(t.sim_nombre);
+                    if ui.add(DragValue::new(&mut sim.nombre).speed(1)).changed() {
+                        *dirty = true;
+                    }
+                    ui.label(t.sim_classes);
+                    if ui.add(DragValue::new(&mut sim.classes).speed(1)).changed() {
+                        *dirty = true;
+                    }
+                });
+                // graphique
+                let idx_g = match sim.graphique {
+                    Graphique::Points => 0,
+                    Graphique::Histogrammes => 1,
+                    Graphique::HistogrammeEnsemble => 2,
+                    Graphique::Boites => 3,
+                };
+                let graphs = [t.g_points, t.g_histogrammes, t.g_ensemble, t.g_boites];
+                ComboBox::from_label(t.sim_graphique)
+                    .selected_text(graphs[idx_g])
+                    .show_ui(ui, |ui| {
+                        for (j, l) in graphs.iter().enumerate() {
+                            if ui.selectable_label(j == idx_g, *l).clicked() && j != idx_g {
+                                sim.graphique = match j {
+                                    0 => Graphique::Points,
+                                    1 => Graphique::Histogrammes,
+                                    2 => Graphique::HistogrammeEnsemble,
+                                    _ => Graphique::Boites,
+                                };
+                                *dirty = true;
+                            }
+                        }
+                    });
+                // habillages
+                if ui
+                    .checkbox(&mut sim.courbe_theorique, t.sim_theorique)
+                    .changed()
+                {
+                    *dirty = true;
+                }
+                if matches!(sim.modele, Modele::Bernoulli { .. })
+                    && ui
+                        .checkbox(&mut sim.aff_fluctuation, t.sim_fluctuation)
+                        .changed()
+                {
+                    *dirty = true;
+                }
+                // Lancer : nouvelle graine (horloge) + échelle automatique
+                if ui.button(t.sim_lancer).clicked() {
+                    sim.graine = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| (d.as_nanos() as u64).max(1))
+                        .unwrap_or(1);
+                    let tir = sim.tirages();
+                    let ((x0, x1), (y0, y1)) = sim.plages(&tir);
+                    let dx = (x1 - x0).abs().max(1e-9);
+                    self.page.cx = (x0 + x1) / 2.0;
+                    self.page.unit_mm = ((self.page.width_mm - 10.0) / dx).max(1e-6);
+                    if y0.is_finite() && y1.is_finite() {
+                        let dy = (y1 - y0).abs().max(1e-9);
+                        self.page.cy = (y0 + y1) / 2.0;
+                        self.page.unit_y_mm = Some(((self.page.height_mm - 10.0) / dy).max(1e-6));
+                    }
+                    *dirty = true;
+                }
+                // grille générale : calculs sur l'ensemble des tirages
+                if let Some(pa) = sim.params_ensemble(&sim.tirages()) {
+                    ui.separator();
+                    ui.strong(t.sim_ensemble);
+                    ui.label(format!("{} {:.0}", t.st_n, pa.n));
+                    ui.label(format!("{} {:.2}", t.st_moyenne, pa.moyenne));
+                    ui.label(format!("{} {:.2}", t.st_sigma, pa.sigma));
+                    ui.label(format!("{} {:.2}", t.st_min, pa.minimum));
+                    ui.label(format!("{} {:.2}", t.st_max, pa.maximum));
+                }
+            });
+    }
+
     /// Fenêtre d'édition d'un arbre de probabilités (v0.9) : table des
     /// branches (code, nom, probabilité — préfixe « & » = barre), Ω,
     /// « sans grille », couleur, épaisseur ; aperçu du niveau.
@@ -1612,6 +1912,7 @@ impl SqApp {
                     &self.suites,
                     &self.serie2,
                     &self.arbres,
+                    &self.simus,
                     &path,
                 ) {
                     Ok(n) => self.set_status(format!("✔ {} écrit ({} octets)", path.display(), n)),
@@ -1633,6 +1934,7 @@ impl SqApp {
                     &self.suites,
                     &self.serie2,
                     &self.arbres,
+                    &self.simus,
                     self.px_per_mm as f64,
                     &path,
                 ) {
@@ -2447,6 +2749,10 @@ impl SqApp {
             let pieces = a.draw_list(&self.page);
             dessiner(&pieces);
         }
+        for sm in &self.simus {
+            let pieces = sm.draw_list(&self.page);
+            dessiner(&pieces);
+        }
     }
 
     /// Dessine les tableaux (aperçu GUI : segments + textes).
@@ -2870,6 +3176,7 @@ impl eframe::App for SqApp {
         self.fenetre_suite(ctx);
         self.fenetre_serie2(ctx);
         self.fenetre_arbre(ctx);
+        self.fenetre_simulation(ctx);
         // sauvegarde automatique si nécessaire
         if self.dirty {
             let s = Session {
@@ -2886,6 +3193,7 @@ impl eframe::App for SqApp {
                 suites: self.suites.clone(),
                 serie2: self.serie2.clone(),
                 arbres: self.arbres.clone(),
+                simus: self.simus.clone(),
             };
             if session::save(&s).is_ok() {
                 self.dirty = false;

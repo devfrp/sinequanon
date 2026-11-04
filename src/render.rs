@@ -4,6 +4,7 @@ use crate::annot::AnnotDraw;
 use crate::curve::Curve;
 use crate::grid::{Page, PAS_MM};
 use crate::png::{self, Raster};
+use crate::simu::Simulation;
 use crate::stats::{Arbre, BoitesMultiples, Piece as PieceStats, Serie1, Serie2, Suite};
 use crate::tableau::{pieces, Piece, Tableau};
 use std::path::Path;
@@ -145,6 +146,7 @@ pub fn svg(
     suites: &[Suite],
     serie2: &[Serie2],
     arbres: &[Arbre],
+    simus: &[Simulation],
 ) -> String {
     let p = page;
     // mode stats : les axes viennent des pièces statistiques (grad_x/grad_y)
@@ -152,7 +154,8 @@ pub fn svg(
         || !boites.is_empty()
         || !suites.is_empty()
         || !serie2.is_empty()
-        || !arbres.is_empty();
+        || !arbres.is_empty()
+        || !simus.is_empty();
     let mut s = String::with_capacity(64 * 1024);
     s.push_str(&format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -469,6 +472,9 @@ pub fn svg(
     for a in arbres {
         svg_stats_pieces(&mut s, &a.draw_list(p));
     }
+    for si in simus {
+        svg_stats_pieces(&mut s, &si.draw_list(p));
+    }
     s.push_str("</g>\n</svg>\n");
     s
 }
@@ -624,10 +630,11 @@ pub fn write_svg_file(
     suites: &[Suite],
     serie2: &[Serie2],
     arbres: &[Arbre],
+    simus: &[Simulation],
     path: &Path,
 ) -> std::io::Result<usize> {
     let s = svg(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres,
+        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus,
     );
     std::fs::write(path, s.as_bytes())?;
     Ok(s.len())
@@ -890,6 +897,7 @@ pub fn write_png_file(
     suites: &[Suite],
     serie2: &[Serie2],
     arbres: &[Arbre],
+    simus: &[Simulation],
     px_per_mm: f64,
     path: &Path,
 ) -> std::io::Result<()> {
@@ -902,7 +910,8 @@ pub fn write_png_file(
         || !boites.is_empty()
         || !suites.is_empty()
         || !serie2.is_empty()
-        || !arbres.is_empty();
+        || !arbres.is_empty()
+        || !simus.is_empty();
     draw_page_raster(&mut r, page, ppm, stats_mode);
     for (curve, polys) in curves {
         if !curve.visible {
@@ -941,6 +950,9 @@ pub fn write_png_file(
     }
     for a in arbres {
         draw_stats_raster(&mut r, ppm, &a.draw_list(page));
+    }
+    for si in simus {
+        draw_stats_raster(&mut r, ppm, &si.draw_list(page));
     }
     r.write_png(path)
 }
@@ -1147,7 +1159,7 @@ mod tests {
         let p = Page::default();
         let c = Curve::fonction("sin(x)", [0, 0, 204]);
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c, polys)], &[], &[], &[], &[], &[], &[], &[]);
+        let s = svg(&p, &[(c, polys)], &[], &[], &[], &[], &[], &[], &[], &[]);
         assert!(s.contains("viewBox=\"0 0 170.00 120.00\""), "{s}");
         assert!(s.contains("clipPath"));
         assert!(s.contains("#0000cc"));
@@ -1163,7 +1175,7 @@ mod tests {
         };
         let c = Curve::fonction("log(x)", [204, 0, 0]);
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c, polys)], &[], &[], &[], &[], &[], &[], &[]);
+        let s = svg(&p, &[(c, polys)], &[], &[], &[], &[], &[], &[], &[], &[]);
         assert!(
             s.contains("10³") || s.contains("10²") || s.contains("10¹"),
             "{s}"
@@ -1186,7 +1198,18 @@ mod tests {
                 b: 2.0,
             }],
         );
-        let s = svg(&p, &[(c, polys)], &annots, &[], &[], &[], &[], &[], &[]);
+        let s = svg(
+            &p,
+            &[(c, polys)],
+            &annots,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        );
         assert!(s.contains("<pattern"), "trame manquante : {s}");
         assert!(s.contains("url(#hatch-0000cc)"), "{s}");
         assert!(s.contains("rotate(45)"), "{s}");
@@ -1205,7 +1228,18 @@ mod tests {
             &[TangenteAnnot { curve: 0, x: 2.0 }],
             &[],
         );
-        let s = svg(&p, &[(c, polys)], &annots, &[], &[], &[], &[], &[], &[]);
+        let s = svg(
+            &p,
+            &[(c, polys)],
+            &annots,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        );
         assert!(s.matches("<circle").count() == 2, "{s}");
         assert!(s.contains("(1.000 ; 1.000)"), "{s}");
         assert!(s.contains("y = 4.000x"), "{s}");
@@ -1222,6 +1256,7 @@ mod tests {
         write_png_file(
             &p,
             &[(c, polys)],
+            &[],
             &[],
             &[],
             &[],
@@ -1271,6 +1306,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             2.0,
             &path,
         )
@@ -1289,7 +1325,18 @@ mod tests {
         let mut c = Curve::fonction("sin(x)", [0, 0, 204]);
         c.visible = false;
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
-        let s = svg(&p, &[(c.clone(), polys)], &[], &[], &[], &[], &[], &[], &[]);
+        let s = svg(
+            &p,
+            &[(c.clone(), polys)],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        );
         assert!(!s.contains("#0000cc"));
         let _ = CurveKind::Fonction {
             expr: String::new(),
@@ -1303,7 +1350,7 @@ mod tests {
         t.dessiner = true;
         t.x_mm = 10.0;
         t.y_mm = 12.0;
-        let s = svg(&p, &[], &[], &[t.clone()], &[], &[], &[], &[], &[]);
+        let s = svg(&p, &[], &[], &[t.clone()], &[], &[], &[], &[], &[], &[]);
         let g = s
             .split('\n')
             .find(|l| l.contains("<g transform="))
@@ -1320,7 +1367,7 @@ mod tests {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::env::temp_dir());
         let path = dir.join("sqn_test_tableau.png");
-        write_png_file(&p, &[], &[], &[t], &[], &[], &[], &[], &[], 6.0, &path).unwrap();
+        write_png_file(&p, &[], &[], &[t], &[], &[], &[], &[], &[], &[], 6.0, &path).unwrap();
         let txt = std::fs::read(&path).unwrap();
         assert_eq!(&txt[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
         if std::env::var("SQN_TMP").is_err() {
@@ -1350,7 +1397,21 @@ mod tests {
             t.x_mm = 5.0;
             t.y_mm = 5.0;
             let path = dir.join(format!("ex-{nom}.png"));
-            write_png_file(&p, &[], &[], &[t], &[], &[], &[], &[], &[], 10.0, &path).unwrap();
+            write_png_file(
+                &p,
+                &[],
+                &[],
+                &[t],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                10.0,
+                &path,
+            )
+            .unwrap();
         }
         // tableaux générés depuis une courbe
         for (nom, (e, a, b)) in [
@@ -1373,6 +1434,7 @@ mod tests {
                 &[],
                 &[],
                 &[t],
+                &[],
                 &[],
                 &[],
                 &[],
