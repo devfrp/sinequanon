@@ -141,10 +141,16 @@ mod tests {
         Page::default()
     }
 
+    fn tmp(nom: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("sqn-test-pdf");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(nom)
+    }
+
     #[test]
     fn entete_eof_et_xref_exacte() {
         let p = page();
-        let tmp = PathBuf::from("/tmp/opencode/sqn-pdf-test.pdf");
+        let tmp = tmp("a4-portrait.pdf");
         write_pdf_file(
             &p,
             &[],
@@ -201,7 +207,7 @@ mod tests {
         let p = page();
         let c = Curve::fonction("x^2", [204, 0, 0]);
         let polys = sample_curve(&c, &p, 40, 40).unwrap();
-        let tmp = PathBuf::from("/tmp/opencode/sqn-pdf-test2.pdf");
+        let tmp = tmp("a4-paysage.pdf");
         write_pdf_file(
             &p,
             &[(c, polys)],
