@@ -153,6 +153,21 @@ fn eval_node(node: &Node, vars: &VarSet, unknown: &mut Vec<String>) -> f64 {
     node.eval(vars, unknown)
 }
 
+/// Évalue une expression de fonction en un x donné (solveur « Calculs »).
+pub fn eval_fonction(expr: &str, x: f64) -> Result<f64, String> {
+    let ast = crate::expr::parse(expr)?;
+    ast.validate_vars(&["x"])?;
+    let mut inconnues = Vec::new();
+    Ok(eval_node(
+        &ast,
+        &VarSet {
+            x: Some(x),
+            ..Default::default()
+        },
+        &mut inconnues,
+    ))
+}
+
 /// Échantillonne la courbe en polylignes (mm). Coupe les segments aux
 /// asymptotes et hors domaine. `n_fn` : colonnes pour une fonction,
 /// `n_param` : points pour paramétrique/polaire.

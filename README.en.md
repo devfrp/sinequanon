@@ -228,6 +228,20 @@ git tag v0.2.0 && git push --tags     # automatic build + release
 - ✅ v0.8 — 2-variable statistics (module v0.8): scatter plots, 8 regressions
   (weighted least squares, Mayer, polynomials *), y/x roles, covariance,
   correlation + corrected correlation
+## v1.1 status — Calculs: equation solver + extrema (solve module)
+
+The « Calculs » menu (solving part, manual p. 95-96) is ported:
+numerical equation solving and local extrema.
+
+| Included | Details |
+|---|---|
+| Solver | sweep + dichotomy (80 iterations, ≈1e-12 relative precision) |
+| Equations | f(x) = g(x) between two of the 10 functions, or f(x) = 0 (zeros) |
+| Extrema | numeric-derivative zeros (central differences), nature from the second derivative (minimum / maximum) |
+| Values | displayed in the « Résoudre une équation… » window (x ≈ …, y ≈ …) |
+| Sheet | « mark the points on the sheet » option: solutions / extrema become point annotations (persisted in the session) — the original's « graphical interpretation » |
+| Interval | draggable bounds, initialised from the page's visible range |
+
 ## v1.0 status — statistical simulations (simu module)
 
 The simulations module (manual p. 65–74) is ported: 7 models,
@@ -254,7 +268,11 @@ The simulations module (manual p. 65–74) is ported: 7 models,
   fluctuation at 95%, seed-replayed identical draws
   (The original « Séries ordonnées » checkbox only sorts the on-screen
   data grid — no exported rendering — and is not ported.)
-- ⬜ automatic extrema and zeros
+- ✅ v1.1 — Calculs: approximate equation solving (f = g or f = 0,
+  dichotomy) + automatic local extrema, points marked on the sheet
+  (The value tables and the rectangle / trapezoid integration methods
+  of the Calculs menu (man. p. 96-99) are still to be ported.)
+- ⬜ value tables + integration (methods, bounds)
 - ⬜ BMP/GIF/EMF/EPS/LaTeX exports, Bézier curves, preferences, printing
 
 ## Credits and license

@@ -15,6 +15,7 @@ mod png;
 mod render;
 mod session;
 mod simu;
+mod solve;
 mod stats;
 mod tabgen;
 mod tableau;

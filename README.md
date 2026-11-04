@@ -228,6 +228,20 @@ Le module simulations (manuel p. 65–74) est porté : 7 modèles,
 | Échelle auto | le bouton « Lancer » resème (horloge) et règle l'échelle des 2 axes du repère depuis la plage du graphique |
 | Panneau | grille générale : effectif, moyenne, écart type, min, max sur l'ensemble des tirages |
 
+## État v1.1 — calculs : solveur + extrema (module solve)
+
+Le menu « Calculs » (partie résolution, man. p. 95-96) est porté :
+résolution approchée d'équations et extrema locaux.
+
+| Inclus | Détail |
+|---|---|
+| Solveur | balayage (1 échantillon ≈ tous les 2,5 ‰ de l'intervalle) + dichotomie (80 itérations, précision ≈ 1e-12 relatif) |
+| Équations | f(x) = g(x) entre deux des 10 fonctions, ou f(x) = 0 (zéros) |
+| Extrema | annulations de la dérivée numérique (différences centrées), nature par dérivée seconde (minimum / maximum) |
+| Valeurs | affichées dans la fenêtre « Résoudre une équation… » (x ≈ …, y ≈ …) |
+| Feuille | option « marquer les points sur la feuille » : les solutions/extrema deviennent des annotations points (persistées dans la session) — l'« interprétation graphique » de l'original |
+| Interval | bornes draggables, initialisées à la plage visible de la page |
+
 ## Feuille de route (parité option par option avec l'original 2.9.4)
 
 - ✅ v0.1 — cœur traceur : courbes, repère, grille 5 × 5 mm, SVG/PNG, session
@@ -255,7 +269,11 @@ Le module simulations (manuel p. 65–74) est porté : 7 modèles,
   théorique, fluctuation des moyennes à 95 %, graine rejouée à l'identique
   (Le bouton « Séries ordonnées » de l'original ne concerne que la grille
   de données du GUI — aucun rendu exporté — et n'est pas porté.)
-- ⬜ extrema et zéros automatiques
+- ✅ v1.1 — calculs : résolution approchée d'équations (f = g ou f = 0,
+  dichotomie) + extrema locaux automatiques, marquage sur la feuille
+  (La table de valeurs et les méthodes d'intégration par rectangles /
+  trapèzes du menu Calculs (man. p. 96-99) restent à porter.)
+- ⬜ table de valeurs + intégration (méthodes, encadrement)
 - ⬜ exports BMP/GIF/EMF/EPS/LaTeX, courbes de Bézier, préférences, impression
 
 ## Crédits et licence

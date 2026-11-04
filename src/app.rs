@@ -3,12 +3,13 @@
 //! intégrales hachurées) et export SVG/PNG.
 
 use crate::annot::{self, draw_list, AnnotDraw, IntegraleAnnot, PointAnnot, TangenteAnnot};
-use crate::curve::{apply_style, sample_curve, Curve, CurveKind, KindId, PALETTE};
+use crate::curve::{apply_style, eval_fonction, sample_curve, Curve, CurveKind, KindId, PALETTE};
 use crate::grid::Page;
 use crate::i18n::{self, Lang};
 use crate::render::{self, CurvePolys};
 use crate::session::{self, Session};
 use crate::simu::{Graphique, Modele, Simulation};
+use crate::solve;
 use crate::stats::{
     self, Arbre, BoitesMultiples, BrancheArbre, Donnees, Loi, Piece as PieceStats, Reg, Role,
     Style, Visualiser,
@@ -71,6 +72,24 @@ pub struct SqApp {
     pub simus: Vec<Simulation>,
     /// fenêtre d'édition ouverte : index de la simulation
     pub simu_sel: Option<usize>,
+    /// fenêtre Calculs (v1.1) ouverte : solveur + extrema
+    pub calculs_ouvert: bool,
+    /// courbe de gauche du solveur (index d'une Fonction)
+    pub calc_f1: Option<usize>,
+    /// courbe de droite (Some = Fonction, None = Ox)
+    pub calc_f2: Option<usize>,
+    /// intervalle d'étude du solveur
+    pub calc_a: f64,
+    pub calc_b: f64,
+    /// marquer les solutions / extrema sur la feuille
+    pub calc_marquer: bool,
+    /// solutions affichées dans la fenêtre : (x, y)
+    pub calc_solutions: Vec<(f64, f64)>,
+    /// extrema locaux affichés : (x, y, minimum ?)
+    pub calc_extrema: Vec<(f64, f64, bool)>,
+    /// marques posées par le solveur sur la feuille (retirées à la
+    /// prochaine recherche, comme un recalcul de l'original)
+    pub solve_marques: Vec<PointAnnot>,
     /// fenêtre d'édition ouverte : index de la série statistique
     pub stat_sel: Option<usize>,
     /// volet actif de la fenêtre statistique (0..=3)
@@ -162,6 +181,15 @@ impl SqApp {
             arbre_sel: None,
             simus: Vec::new(),
             simu_sel: None,
+            calculs_ouvert: false,
+            calc_f1: None,
+            calc_f2: None,
+            calc_a: 0.0,
+            calc_b: 0.0,
+            calc_marquer: true,
+            calc_solutions: Vec::new(),
+            calc_extrema: Vec::new(),
+            solve_marques: Vec::new(),
             stat_sel: None,
             stat_volet: 0,
             tab_sel: None,
@@ -257,6 +285,8 @@ impl SqApp {
                         self.section_arbres(ui);
                         ui.separator();
                         self.section_simulations(ui);
+                        ui.separator();
+                        self.section_calculs(ui);
                         ui.separator();
                         self.section_repere(ui);
                         ui.separator();
@@ -1673,6 +1703,207 @@ impl SqApp {
                     ui.label(format!("{} {:.2}", t.st_max, pa.maximum));
                 }
             });
+    }
+
+    /// Bouton « Calculs » du panneau latéral (v1.1) : solveur
+    /// approché du menu Calculs de l'original (man. p. 95).
+    fn section_calculs(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.strong(t.calculs);
+        if ui.button(t.calc_resoudre).clicked() {
+            if !self.calculs_ouvert {
+                self.calculs_ouvert = true;
+                if self.calc_f1.is_none() {
+                    self.calc_f1 = self
+                        .curves
+                        .iter()
+                        .position(|c| matches!(c.kind, CurveKind::Fonction { .. }));
+                    self.calc_f2 = None;
+                    let (x0, x1) = self.page.x_range();
+                    self.calc_a = x0;
+                    self.calc_b = x1;
+                }
+            } else {
+                self.calculs_ouvert = false;
+            }
+        }
+    }
+
+    /// Fenêtre « Résoudre une équation » (v1.1) : deux fonctions ou Ox,
+    /// intervalle d'étude, recherche approchée des solutions (balayage +
+    /// dichotomie) et des extrema locaux, marquage sur la feuille.
+    fn fenetre_calculs(&mut self, ctx: &egui::Context) {
+        if !self.calculs_ouvert {
+            return;
+        }
+        let t = i18n::table(self.lang);
+        // les 10 fonctions de l'original : le solveur n'agit que sur elles
+        let fns: Vec<(usize, String)> = self
+            .curves
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| matches!(c.kind, CurveKind::Fonction { .. }))
+            .map(|(i, c)| {
+                let e = match &c.kind {
+                    CurveKind::Fonction { expr } => expr.clone(),
+                    _ => String::new(),
+                };
+                (i, e)
+            })
+            .collect();
+        if fns.is_empty() {
+            let mut ouverte = true;
+            egui::Window::new(t.calculs)
+                .open(&mut ouverte)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label(RichText::new(t.calc_aucune_fonction).weak());
+                });
+            if !ouverte {
+                self.calculs_ouvert = false;
+            }
+            return;
+        }
+        let mut ouverte = true;
+        egui::Window::new(t.calc_resoudre)
+            .open(&mut ouverte)
+            .resizable(true)
+            .default_width(400.0)
+            .show(ctx, |ui| {
+                if self.calc_f1.is_none() {
+                    self.calc_f1 = Some(fns[0].0);
+                }
+                if self.calc_f2 == self.calc_f1 && self.calc_f2.is_some() {
+                    // la courbe de droite ne peut pas être celle de gauche
+                    self.calc_f2 = None;
+                }
+                let idx1 = self.calc_f1.unwrap_or(0);
+                // choix de la fonction f
+                let ex1 = fns
+                    .iter()
+                    .find(|(i, _)| *i == idx1)
+                    .map(|(_, e)| e.clone())
+                    .unwrap_or_default();
+                ComboBox::from_label(t.calc_f)
+                    .selected_text(ex1.clone())
+                    .show_ui(ui, |ui| {
+                        for (i, e) in &fns {
+                            if ui.selectable_label(*i == idx1, e).clicked() && *i != idx1 {
+                                self.calc_f1 = Some(*i);
+                            }
+                        }
+                    });
+                // choix de g (une autre fonction, ou Ox)
+                let lb2 = match self.calc_f2 {
+                    None => t.calc_contre_ox.to_string(),
+                    Some(i) => fns
+                        .iter()
+                        .find(|(j, _)| *j == i)
+                        .map(|(_, e)| e.clone())
+                        .unwrap_or_default(),
+                };
+                ComboBox::from_label(t.calc_contre)
+                    .selected_text(lb2)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(self.calc_f2.is_none(), t.calc_contre_ox)
+                            .clicked()
+                            && self.calc_f2.is_some()
+                        {
+                            self.calc_f2 = None;
+                        }
+                        for (i, e) in &fns {
+                            if *i == idx1 {
+                                continue;
+                            }
+                            if ui.selectable_label(self.calc_f2 == Some(*i), e).clicked()
+                                && self.calc_f2 != Some(*i)
+                            {
+                                self.calc_f2 = Some(*i);
+                            }
+                        }
+                    });
+                // intervalle d'étude
+                ui.horizontal(|ui| {
+                    ui.label(t.calc_intervalle);
+                    ui.add(DragValue::new(&mut self.calc_a).speed(0.5));
+                    ui.label(t.calc_to);
+                    ui.add(DragValue::new(&mut self.calc_b).speed(0.5));
+                });
+                if ui
+                    .checkbox(&mut self.calc_marquer, t.calc_marquer)
+                    .changed()
+                {
+                    // (les marques ne changent qu'à la prochaine recherche)
+                }
+                // recherche des solutions et des extrema
+                if ui.button(t.calc_rechercher).clicked() {
+                    let ex2 = match self.calc_f2 {
+                        None => String::new(),
+                        Some(i) => fns
+                            .iter()
+                            .find(|(j, _)| *j == i)
+                            .map(|(_, e)| e.clone())
+                            .unwrap_or_default(),
+                    };
+                    let (a, b) = (self.calc_a.min(self.calc_b), self.calc_a.max(self.calc_b));
+                    let n = (((b - a).abs() * 400.0).max(4000.0) as usize).min(200_000);
+                    let f1v = |x: f64| eval_fonction(&ex1, x).unwrap_or(f64::NAN);
+                    self.calc_solutions = match self.calc_f2 {
+                        None => solve::zeros(&f1v, a, b, n),
+                        Some(_) => {
+                            let f2v = |x: f64| eval_fonction(&ex2, x).unwrap_or(f64::NAN);
+                            solve::resolue(&f1v, &f2v, a, b, n)
+                        }
+                    }
+                    .into_iter()
+                    .map(|x| (x, f1v(x)))
+                    .collect();
+                    self.calc_extrema = solve::extrema(&f1v, a, b, n);
+                    // marques sur la feuille (l'« interprétation graphique »)
+                    let old = std::mem::take(&mut self.solve_marques);
+                    self.points.retain(|p| !old.contains(p));
+                    if self.calc_marquer {
+                        for &(x, _) in &self.calc_solutions {
+                            let m = PointAnnot { curve: idx1, x };
+                            self.solve_marques.push(m);
+                            self.points.push(m);
+                        }
+                        for &(x, _, _) in &self.calc_extrema {
+                            let m = PointAnnot { curve: idx1, x };
+                            if !self.solve_marques.contains(&m) {
+                                self.solve_marques.push(m);
+                                self.points.push(m);
+                            }
+                        }
+                    }
+                    self.dirty = true;
+                }
+                // affichage des valeurs approchées
+                egui::ScrollArea::vertical()
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        ui.separator();
+                        ui.strong(t.calc_solutions);
+                        if self.calc_solutions.is_empty() {
+                            ui.label(RichText::new(t.calc_sol_aucune).weak().small());
+                        }
+                        for &(x, y) in &self.calc_solutions {
+                            ui.label(format!("x ≈ {x:.4} ; y ≈ {y:.4}"));
+                        }
+                        ui.strong(t.calc_extrema_t);
+                        if self.calc_extrema.is_empty() {
+                            ui.label(RichText::new(t.calc_extrema_aucun).weak().small());
+                        }
+                        for &(x, y, min) in &self.calc_extrema {
+                            let lbl = if min { t.calc_min } else { t.calc_max };
+                            ui.label(format!("{lbl} : x ≈ {x:.4} ; y ≈ {y:.4}"));
+                        }
+                    });
+            });
+        if !ouverte {
+            self.calculs_ouvert = false;
+        }
     }
 
     /// Fenêtre d'édition d'un arbre de probabilités (v0.9) : table des
@@ -3177,6 +3408,7 @@ impl eframe::App for SqApp {
         self.fenetre_serie2(ctx);
         self.fenetre_arbre(ctx);
         self.fenetre_simulation(ctx);
+        self.fenetre_calculs(ctx);
         // sauvegarde automatique si nécessaire
         if self.dirty {
             let s = Session {
