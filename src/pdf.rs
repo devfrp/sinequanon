@@ -135,7 +135,6 @@ mod tests {
     use super::*;
     use crate::curve::sample_curve;
     use crate::curve::Curve;
-    use std::path::PathBuf;
 
     fn page() -> Page {
         Page::default()
