@@ -242,6 +242,19 @@ numerical equation solving and local extrema.
 | Sheet | « mark the points on the sheet » option: solutions / extrema become point annotations (persisted in the session) — the original's « graphical interpretation » |
 | Interval | draggable bounds, initialised from the page's visible range |
 
+## v1.2 status — graphics: BMP, GIF and EPS (man. p. 99-101)
+
+The original's graphics sub-menu offers BMP/GIF/EPS beyond SVG: all
+three are ported, sharing the PNG raster.
+
+| Included | Details |
+|---|---|
+| BMP | Windows 24-bit (BGR, bottom-up rows, 32-bit padding) — raster identical to PNG byte-for-byte |
+| GIF | GIF89a 256 colours: 6-6-6 web palette (216) + 32 greys, standard LZW compression (9-12 bit codes, CLEAR/END) — local quantization within 51 per channel |
+| EPS | Level-2 EPS with the full raster embedded (ASCIIHexDecode, scaled unit square, ImageMatrix [w 0 0 -h 0 h]) — imports directly in LaTeX through \includegraphics |
+| Interface | BMP/GIF/EPS buttons in the export section + CLI options --bmp/--gif/--eps |
+| Not ported | JPG, EMF/WMF (Windows binary formats); the original EPS is a level-2 PostScript — the complete image is embedded here (note: no vector path) |
+
 ## v1.0 status — statistical simulations (simu module)
 
 The simulations module (manual p. 65–74) is ported: 7 models,
@@ -273,7 +286,9 @@ The simulations module (manual p. 65–74) is ported: 7 models,
   (The value tables and the rectangle / trapezoid integration methods
   of the Calculs menu (man. p. 96-99) are still to be ported.)
 - ⬜ value tables + integration (methods, bounds)
-- ⬜ BMP/GIF/EMF/EPS/LaTeX exports, Bézier curves, preferences, printing
+- ✅ v1.2 — BMP 24-bit, GIF 256-colour (LZW) and level-2 EPS exports
+  (embedded ASCIIHex image — not vector; JPG and EMF/WMF not ported)
+- ⬜ Bézier curves, preferences, printing
 
 ## Credits and license
 

@@ -2173,6 +2173,69 @@ impl SqApp {
                     Err(e) => self.set_status(format!("✖ Échec PNG : {e}")),
                 }
             }
+            if ui.button("BMP (sinequanon.bmp)").clicked() {
+                let data = self.export_data();
+                let path = PathBuf::from("sinequanon.bmp");
+                match render::write_bmp_file(
+                    &self.page,
+                    &data,
+                    &self.annots,
+                    &self.tableaux,
+                    &self.stats,
+                    &self.boites,
+                    &self.suites,
+                    &self.serie2,
+                    &self.arbres,
+                    &self.simus,
+                    self.px_per_mm as f64,
+                    &path,
+                ) {
+                    Ok(()) => self.set_status(format!("✔ {} écrit", path.display())),
+                    Err(e) => self.set_status(format!("✖ Échec BMP : {e}")),
+                }
+            }
+            if ui.button("GIF (sinequanon.gif)").clicked() {
+                let data = self.export_data();
+                let path = PathBuf::from("sinequanon.gif");
+                match render::write_gif_file(
+                    &self.page,
+                    &data,
+                    &self.annots,
+                    &self.tableaux,
+                    &self.stats,
+                    &self.boites,
+                    &self.suites,
+                    &self.serie2,
+                    &self.arbres,
+                    &self.simus,
+                    self.px_per_mm as f64,
+                    &path,
+                ) {
+                    Ok(()) => self.set_status(format!("✔ {} écrit", path.display())),
+                    Err(e) => self.set_status(format!("✖ Échec GIF : {e}")),
+                }
+            }
+            if ui.button("EPS (sinequanon.eps)").clicked() {
+                let data = self.export_data();
+                let path = PathBuf::from("sinequanon.eps");
+                match render::write_eps_file(
+                    &self.page,
+                    &data,
+                    &self.annots,
+                    &self.tableaux,
+                    &self.stats,
+                    &self.boites,
+                    &self.suites,
+                    &self.serie2,
+                    &self.arbres,
+                    &self.simus,
+                    self.px_per_mm as f64,
+                    &path,
+                ) {
+                    Ok(()) => self.set_status(format!("✔ {} écrit", path.display())),
+                    Err(e) => self.set_status(format!("✖ Échec EPS : {e}")),
+                }
+            }
             ui.label(t.resolution);
             ui.add(
                 DragValue::new(&mut self.px_per_mm)

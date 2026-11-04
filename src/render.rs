@@ -887,7 +887,7 @@ fn draw_tableau_raster(r: &mut Raster, t: &Tableau, ppm: f64) {
 /// Écrit la page en PNG à `px_per_mm` pixels par millimètre (les
 /// arguments décrivent tout le contenu d'une page, d'où leur nombre).
 #[allow(clippy::too_many_arguments)]
-pub fn write_png_file(
+fn rasterize_page(
     page: &Page,
     curves: &[CurvePolys],
     annots: &[AnnotDraw],
@@ -899,8 +899,7 @@ pub fn write_png_file(
     arbres: &[Arbre],
     simus: &[Simulation],
     px_per_mm: f64,
-    path: &Path,
-) -> std::io::Result<()> {
+) -> Raster {
     let w = ((page.width_mm * px_per_mm).round() as usize).clamp(16, 20000);
     let h = ((page.height_mm * px_per_mm).round() as usize).clamp(16, 20000);
     let ppm = w as f64 / page.width_mm;
@@ -954,7 +953,145 @@ pub fn write_png_file(
     for si in simus {
         draw_stats_raster(&mut r, ppm, &si.draw_list(page));
     }
-    r.write_png(path)
+    r
+}
+
+/// Rasterise puis écrit un PNG.
+#[allow(clippy::too_many_arguments)]
+pub fn write_png_file(
+    page: &Page,
+    curves: &[CurvePolys],
+    annots: &[AnnotDraw],
+    tableaux: &[Tableau],
+    stats: &[Serie1],
+    boites: &[BoitesMultiples],
+    suites: &[Suite],
+    serie2: &[Serie2],
+    arbres: &[Arbre],
+    simus: &[Simulation],
+    px_per_mm: f64,
+    path: &Path,
+) -> std::io::Result<()> {
+    rasterize_page(
+        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, px_per_mm,
+    )
+    .write_png(path)
+}
+
+/// Rasterise puis écrit un BMP 24 bits (man. p. 100).
+#[allow(clippy::too_many_arguments)]
+pub fn write_bmp_file(
+    page: &Page,
+    curves: &[CurvePolys],
+    annots: &[AnnotDraw],
+    tableaux: &[Tableau],
+    stats: &[Serie1],
+    boites: &[BoitesMultiples],
+    suites: &[Suite],
+    serie2: &[Serie2],
+    arbres: &[Arbre],
+    simus: &[Simulation],
+    px_per_mm: f64,
+    path: &Path,
+) -> std::io::Result<()> {
+    rasterize_page(
+        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, px_per_mm,
+    )
+    .write_bmp(path)
+}
+
+/// Rasterise puis écrit un GIF 256 couleurs (man. p. 100).
+#[allow(clippy::too_many_arguments)]
+pub fn write_gif_file(
+    page: &Page,
+    curves: &[CurvePolys],
+    annots: &[AnnotDraw],
+    tableaux: &[Tableau],
+    stats: &[Serie1],
+    boites: &[BoitesMultiples],
+    suites: &[Suite],
+    serie2: &[Serie2],
+    arbres: &[Arbre],
+    simus: &[Simulation],
+    px_per_mm: f64,
+    path: &Path,
+) -> std::io::Result<()> {
+    rasterize_page(
+        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, px_per_mm,
+    )
+    .write_gif(path)
+}
+
+/// EPS niveau 2 avec l'image rasterisée embarquée (hexadécimal) —
+/// directement importable dans un document LaTeX via \includegraphics.
+#[allow(clippy::too_many_arguments)]
+pub fn write_eps_file(
+    page: &Page,
+    curves: &[CurvePolys],
+    annots: &[AnnotDraw],
+    tableaux: &[Tableau],
+    stats: &[Serie1],
+    boites: &[BoitesMultiples],
+    suites: &[Suite],
+    serie2: &[Serie2],
+    arbres: &[Arbre],
+    simus: &[Simulation],
+    px_per_mm: f64,
+    path: &Path,
+) -> std::io::Result<()> {
+    use std::fmt::Write as _;
+    let r = rasterize_page(
+        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, px_per_mm,
+    );
+    let (w, h) = (r.w, r.h);
+    // la zone englobante est en points PostScript (72 pt = 1 pouce) ;
+    // forme canonique : le carré unitaire est mis à l'échelle sur la
+    // page, et l'ImageMatrix [w 0 0 -h 0 h] remplit ce carré (image
+    // lisible de haut en bas : la ligne 1 des données est le haut)
+    let wpt_e = page.width_mm * 72.0 / 25.4;
+    let hpt_e = page.height_mm * 72.0 / 25.4;
+    let mut s = String::with_capacity(w * h * 2 / 3 + 2048);
+    writeln!(s, "%!PS-Adobe-2.0 EPSF-2.0").unwrap();
+    writeln!(s, "%%BoundingBox: 0 0 {wpt_e:.3} {hpt_e:.3}").unwrap();
+    writeln!(s, "%%Title: sinequanon").unwrap();
+    writeln!(
+        s,
+        "%%Creator: sinequanon {} (Rust) — image rasterisée {}×{} px",
+        env!("CARGO_PKG_VERSION"),
+        w,
+        h
+    )
+    .unwrap();
+    writeln!(s, "%%EndComments").unwrap();
+    writeln!(s, "%%Page: 1 1").unwrap();
+    writeln!(s, "save").unwrap();
+    writeln!(s, "{wpt_e:.3} {hpt_e:.3} scale").unwrap();
+    writeln!(
+        s,
+        "/DeviceRGB setcolorspace << /ImageType 1 /Width {w} /Height {h} /BitsPerComponent 8 /Decode [0 1 0 1 0 1] /ImageMatrix [{w} 0 0 -{h} 0 {h}] /DataSource currentfile /ASCIIHexDecode filter >> image"
+    )
+    .unwrap();
+    // données hexadécimales (80 caractères par ligne)
+    let mut line = String::new();
+    for px in r.px.chunks_exact(4) {
+        for b in &px[..3] {
+            write!(line, "{:02x}", b).unwrap();
+        }
+        if line.len() >= 78 {
+            s.push_str(&line);
+            s.push('\n');
+            line.clear();
+        }
+    }
+    if !line.is_empty() {
+        s.push_str(&line);
+        s.push('\n');
+    }
+    writeln!(s, ">").unwrap(); // marqueur de fin ASCIIHexDecode
+    writeln!(s, "restore").unwrap();
+    writeln!(s, "%%Trailer").unwrap();
+    writeln!(s, "%%EOF").unwrap();
+    std::fs::write(path, s)
 }
 
 /// Rendu raster des pièces statistiques (coordonnées mm → px).

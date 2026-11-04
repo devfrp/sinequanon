@@ -117,6 +117,171 @@ impl Raster {
         }
     }
 
+    /// Bitmap Windows 24 bits (rangées du bas vers le haut, BGR) —
+    /// format d'export de l'original (man. p. 100).
+    pub fn write_bmp(&self, path: &Path) -> std::io::Result<()> {
+        let w = self.w as u32;
+        let h = self.h as u32;
+        let row_len = (w * 3).div_ceil(4) * 4;
+        let data_size = row_len * h;
+        let total = 14u32 + 40 + data_size;
+        let mut out = Vec::with_capacity(total as usize);
+        // BITMAPFILEHEADER (octets 0..14)
+        out.extend_from_slice(b"BM");
+        out.extend_from_slice(&total.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&54u32.to_le_bytes());
+        // BITMAPINFOHEADER (40 octets)
+        out.extend_from_slice(&40u32.to_le_bytes());
+        out.extend_from_slice(&w.to_le_bytes());
+        out.extend_from_slice(&h.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&24u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&data_size.to_le_bytes());
+        out.extend_from_slice(&3780u32.to_le_bytes()); // 96 dpi
+        out.extend_from_slice(&3780u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        // pixels BGR, rangée par rangée, du bas vers le haut + padding
+        let roww = (self.w * 3) as u32;
+        for y in (0..self.h).rev() {
+            for x in 0..self.w {
+                let i = (y * self.w + x) * 4;
+                out.push(self.px[i + 2]);
+                out.push(self.px[i + 1]);
+                out.push(self.px[i]);
+            }
+            out.resize(out.len() + (row_len - roww) as usize, 0);
+        }
+        std::fs::write(path, out)
+    }
+
+    /// GIF89a 256 couleurs (palette 6-6-6 + 32 gris) avec LZW —
+    /// format d'export de l'original (man. p. 100).
+    pub fn write_gif(&self, path: &Path) -> std::io::Result<()> {
+        // palette : 216 couleurs 6-6-6 puis 32 niveaux de gris
+        let mut palette: Vec<[u8; 3]> = Vec::with_capacity(256);
+        for r in 0..6u32 {
+            for g in 0..6u32 {
+                for b in 0..6u32 {
+                    palette.push([(r * 51) as u8, (g * 51) as u8, (b * 51) as u8]);
+                }
+            }
+        }
+        for i in 0..32u32 {
+            let g = (i * 8).clamp(0, 255) as u8;
+            palette.push([g, g, g]);
+        }
+        palette.resize(256, [0, 0, 0]);
+        // table de correspondance : clé 3-3-2 → indice le plus proche
+        let mut lut = vec![0u16; 512];
+        for (k, slot) in lut.iter_mut().enumerate() {
+            let rr = (((k >> 6) & 7) * 255 / 7) as i32;
+            let gg = (((k >> 3) & 7) * 255 / 7) as i32;
+            let bb = ((k & 7) * 255 / 3) as i32;
+            let (mut best, mut bd) = (0usize, u32::MAX);
+            for (j, c) in palette.iter().enumerate() {
+                let dr = rr - c[0] as i32;
+                let dg = gg - c[1] as i32;
+                let db = bb - c[2] as i32;
+                let d = (dr * dr + dg * dg + db * db) as u32;
+                if d < bd {
+                    bd = d;
+                    best = j;
+                }
+            }
+            *slot = best as u16;
+        }
+        // clé 3-3-2 : 3 bits de rouge, 3 de vert, 2 (poids forts) de bleu
+        let nearest = |r: u8, g: u8, b: u8| {
+            lut[(((r as u16) >> 5) << 6) as usize
+                | (((g as u16) >> 5) << 3) as usize
+                | ((b as u16) >> 6) as usize]
+        };
+        // indices de palette des pixels
+        let mut indexes = Vec::with_capacity(self.w * self.h);
+        for px in self.px.chunks_exact(4) {
+            indexes.push(nearest(px[0], px[1], px[2]));
+        }
+        // compression LZW GIF (codes de longueur variable, petit-boutiste)
+        let mut data = Vec::new();
+        let mut bitbuf: u32 = 0;
+        let mut bitcnt = 0u32;
+        let mut bytes = Vec::new();
+        let mut write_code = |code: u16, size: u32| {
+            bitbuf |= (code as u32) << bitcnt;
+            bitcnt += size;
+            while bitcnt >= 8 {
+                bytes.push((bitbuf & 0xff) as u8);
+                bitbuf >>= 8;
+                bitcnt -= 8;
+            }
+        };
+        let clear: u16 = 256;
+        let fin: u16 = 257;
+        let mut dict: std::collections::HashMap<(u16, u16), u16> =
+            std::collections::HashMap::with_capacity(4096);
+        let mut code_size = 9u32;
+        let mut next_code = 258u16;
+        write_code(clear, code_size);
+        if !indexes.is_empty() {
+            let mut cur = indexes[0];
+            for &v in indexes.iter().skip(1) {
+                if let Some(&c) = dict.get(&(cur, v)) {
+                    cur = c;
+                } else {
+                    write_code(cur, code_size);
+                    if next_code < 4096 {
+                        dict.insert((cur, v), next_code);
+                        next_code += 1;
+                        if next_code == (1u16 << code_size) + 1 && code_size < 12 {
+                            code_size += 1;
+                        }
+                    } else {
+                        write_code(clear, code_size);
+                        dict.clear();
+                        code_size = 9;
+                        next_code = 258;
+                    }
+                    cur = v;
+                }
+            }
+            write_code(cur, code_size);
+        }
+        write_code(fin, code_size);
+        if bitcnt > 0 {
+            bytes.push((bitbuf & 0xff) as u8);
+        }
+        // blocs de données de ≤ 255 octets
+        data.push(8u8); // taille LZW minimale
+        for c in bytes.chunks(255) {
+            data.push(c.len() as u8);
+            data.extend_from_slice(c);
+        }
+        data.push(0); // fin des blocs
+                      // entête GIF89a
+        let mut out = Vec::new();
+        out.extend_from_slice(b"GIF89a");
+        out.extend_from_slice(&(self.w as u16).to_le_bytes());
+        out.extend_from_slice(&(self.h as u16).to_le_bytes());
+        out.push(0xf7); // table de couleurs globale sur 256 valeurs
+        out.push(0);
+        out.push(0);
+        for c in &palette {
+            out.extend_from_slice(c);
+        }
+        out.push(b','); // descripteur d'image
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&(self.w as u16).to_le_bytes());
+        out.extend_from_slice(&(self.h as u16).to_le_bytes());
+        out.push(0);
+        out.extend_from_slice(&data);
+        out.push(b';'); // fin du GIF
+        std::fs::write(path, out)
+    }
+
     /// Convertit en RGB et écrit un fichier PNG.
     pub fn write_png(&self, path: &Path) -> std::io::Result<()> {
         let mut rgb = Vec::with_capacity(self.w * self.h * 3);
@@ -588,6 +753,118 @@ impl Raster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bmp_24_bits_aller_retour() {
+        let dir = std::env::temp_dir().join("sqn-test-bmp");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.bmp");
+        let mut r = Raster::new(4, 3, [255, 255, 255, 255]);
+        r.set(0, 0, [255, 0, 0, 255]); // pixel haut-gauche rouge
+        r.set(3, 2, [0, 0, 255, 255]); // pixel bas-droite bleu
+        r.write_bmp(&path).unwrap();
+        let data = std::fs::read(&path).unwrap();
+        assert_eq!(&data[..2], b"BM");
+        // 14 octets d'entête fichier + 40 d'entête DIB
+        // + 3 rangées de 4 px × 3 octets (multiple de 4, padding nul)
+        let expected = 14 + 40 + 3 * 12;
+        assert_eq!(data.len(), expected);
+        // rangée du bas (y = 2) en premier : pixel (3,2) bleu → BGR [255,0,0]
+        assert_eq!(&data[54 + 9..54 + 12], &[255, 0, 0]);
+        // rangée du haut (y = 0) en dernier : pixel (0,0) rouge → BGR [0,0,255]
+        assert_eq!(&data[54 + 2 * 12..54 + 2 * 12 + 3], &[0, 0, 255]);
+    }
+
+    #[test]
+    fn gif_aller_retour_lzw() {
+        let dir = std::env::temp_dir().join("sqn-test-gif");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.gif");
+        // dégradé d'un rouge à l'autre : 8 pixels
+        let mut r = Raster::new(8, 1, [255, 255, 255, 255]);
+        for x in 0..8u8 {
+            r.set(x as i64, 0, [x * 34, (7 - x) * 34, 0, 255]);
+        }
+        r.write_gif(&path).unwrap();
+        let g = std::fs::read(&path).unwrap();
+        assert_eq!(&g[..6], b"GIF89a");
+        assert_eq!(&g[6..8], &8u16.to_le_bytes());
+        assert_eq!(g[10], 0xf7); // table globale 256 couleurs
+                                 // palette 256 couleurs
+        let palette: Vec<[u8; 3]> = (0..256)
+            .map(|k| [g[13 + 3 * k], g[14 + 3 * k], g[15 + 3 * k]])
+            .collect();
+        // données d'image : descripteur 10 octets après l'entête (13 + 768)
+        let mut i = 13 + 768;
+        assert_eq!(g[i], b',');
+        i += 1 + 8 + 1; // ',' + 4 coordonnées u16 + 1 flag
+        let min_size = g[i] as usize;
+        assert_eq!(min_size, 8);
+        i += 1;
+        // blocs
+        let mut lzw = Vec::new();
+        while g[i] != 0 {
+            let len = g[i] as usize;
+            lzw.extend_from_slice(&g[i + 1..i + 1 + len]);
+            i += 1 + len;
+        }
+        // décodeur LZW minimal
+        let mut dict: Vec<Vec<u16>> = (0..256).map(|k| vec![k as u16]).collect();
+        dict.push(vec![]); // 256 clair
+        dict.push(vec![]); // 257 fin
+        let mut bits = 0u64;
+        let mut acc = 0u64;
+        let mut code_size = 9u32;
+        let mut out: Vec<u16> = Vec::new();
+        let mut prev: Option<u16> = None;
+        let mut pos = 0usize;
+        while out.len() < 256 * 4 && pos < lzw.len() * 8 {
+            acc |= ((lzw[pos / 8] >> (pos % 8)) as u64 & 1) << bits;
+            bits += 1;
+            pos += 1;
+            if bits == code_size as u64 {
+                let code = acc as u16;
+                acc = 0;
+                bits = 0;
+                match code {
+                    256 => {
+                        dict.truncate(258);
+                        code_size = 9;
+                        prev = None;
+                    }
+                    257 => break,
+                    c => {
+                        let entry = if let Some(e) = dict.get(c as usize) {
+                            e.clone()
+                        } else {
+                            let mut e = dict[prev.unwrap() as usize].clone();
+                            e.push(e[0]);
+                            e
+                        };
+                        if let Some(p) = prev {
+                            let mut ne = dict[p as usize].clone();
+                            ne.push(entry[0]);
+                            let nlen = ne.len();
+                            dict.push(ne);
+                            if nlen >= (1usize << code_size) && code_size < 12 {
+                                code_size += 1;
+                            }
+                        }
+                        out.extend(entry);
+                        prev = Some(code);
+                    }
+                }
+            }
+        }
+        assert_eq!(out.len(), 8, "{out:?}");
+        // chaque indice doit ramener la couleur 6-6-6 la plus proche :
+        // le dégradé rouge croît et le vert décroît le long des pixels
+        let rouge: Vec<i32> = out.iter().map(|&v| palette[v as usize][0] as i32).collect();
+        let vert: Vec<i32> = out.iter().map(|&v| palette[v as usize][1] as i32).collect();
+        assert!(rouge.windows(2).all(|w| w[0] <= w[1]), "{rouge:?}");
+        assert!(vert.windows(2).all(|w| w[0] >= w[1]), "{vert:?}");
+        assert_eq!(g[g.len() - 1], b';');
+    }
 
     #[test]
     fn entete_png_valide() {

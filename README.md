@@ -242,6 +242,19 @@ résolution approchée d'équations et extrema locaux.
 | Feuille | option « marquer les points sur la feuille » : les solutions/extrema deviennent des annotations points (persistées dans la session) — l'« interprétation graphique » de l'original |
 | Interval | bornes draggables, initialisées à la plage visible de la page |
 
+## État v1.2 — graphiques : BMP, GIF et EPS (écran p. 99-101)
+
+Le sous-menu graphique de l'original comporte BMP/GIF/EPS en plus de
+SVG : les trois sont portés, avec le même raster que le PNG.
+
+| Inclus | Détail |
+|---|---|
+| BMP | Windows 24 bits (BGR, rangées bas-haut, padding 32 bits) — raster identique au PNG à l'octet près |
+| GIF | GIF89a 256 couleurs : palette « web » 6-6-6 (216) + 32 gris, compression LZW standard (codes 9-12 bits, CLEAR/END) — quantification locale ≤ 51 par canal |
+| EPS | EPS niveau 2 avec l'image rasterisée intégrée (ASCIIHexDecode, carré unitaire mis à l'échelle, ImageMatrix [w 0 0 -h 0 h]) — importable tel quel dans LaTeX via \includegraphics |
+| Interface | boutons BMP/GIF/EPS de la section export + options CLI --bmp/--gif/--eps |
+| Non porté | JPG, EMF/WMF (formats binaires Windows) ; l'EPS de l'original est un PostScript niveau 2 — ici l'image complète est intégrée (nota : pas de tracé vectoriel) |
+
 ## Feuille de route (parité option par option avec l'original 2.9.4)
 
 - ✅ v0.1 — cœur traceur : courbes, repère, grille 5 × 5 mm, SVG/PNG, session
@@ -274,7 +287,9 @@ résolution approchée d'équations et extrema locaux.
   (La table de valeurs et les méthodes d'intégration par rectangles /
   trapèzes du menu Calculs (man. p. 96-99) restent à porter.)
 - ⬜ table de valeurs + intégration (méthodes, encadrement)
-- ⬜ exports BMP/GIF/EMF/EPS/LaTeX, courbes de Bézier, préférences, impression
+- ✅ v1.2 — exports BMP 24 bits, GIF 256 couleurs (LZW) et EPS niveau 2
+  (image intégrée ASCIIHex — pas vectoriel ; JPG et EMF/WMF non portés)
+- ⬜ courbes de Bézier, préférences, impression
 
 ## Crédits et licence
 

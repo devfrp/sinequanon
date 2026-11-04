@@ -127,6 +127,9 @@ struct Opts {
     aires: Vec<(usize, f64, f64)>,
     svg: Option<String>,
     png: Option<String>,
+    bmp: Option<String>,
+    gif: Option<String>,
+    eps: Option<String>,
     px_par_mm: f64,
     page: Page,
     /// séries statistiques à une variable (v0.4), chargées depuis le
@@ -157,6 +160,9 @@ impl Default for Opts {
             aires: Vec::new(),
             svg: None,
             png: None,
+            bmp: None,
+            gif: None,
+            eps: None,
             px_par_mm: 4.0,
             page: Page::default(),
             serie1: Vec::new(),
@@ -251,6 +257,9 @@ fn exporter(args: &[String]) -> Result<(), String> {
             }
             "--svg" => o.svg = Some(valeur(args, &mut i, a)?),
             "--png" => o.png = Some(valeur(args, &mut i, a)?),
+            "--bmp" => o.bmp = Some(valeur(args, &mut i, a)?),
+            "--gif" => o.gif = Some(valeur(args, &mut i, a)?),
+            "--eps" => o.eps = Some(valeur(args, &mut i, a)?),
             "--px-par-mm" => o.px_par_mm = nb(&valeur(args, &mut i, a)?, a)?,
             "--largeur-mm" => o.page.width_mm = nb(&valeur(args, &mut i, a)?, a)?,
             "--hauteur-mm" => o.page.height_mm = nb(&valeur(args, &mut i, a)?, a)?,
@@ -386,6 +395,60 @@ fn exporter(args: &[String]) -> Result<(), String> {
         )
         .map_err(|e| format!("écriture de {png} : {e}"))?;
         println!("✔ {png} écrit");
+    }
+    if let Some(bmp) = &o.bmp {
+        render::write_bmp_file(
+            &o.page,
+            &data,
+            &annots,
+            &[],
+            &o.serie1,
+            &o.boites,
+            &o.suites,
+            &o.serie2,
+            &o.arbres,
+            &o.simus,
+            o.px_par_mm,
+            &PathBuf::from(bmp),
+        )
+        .map_err(|e| format!("écriture de {bmp} : {e}"))?;
+        println!("✔ {bmp} écrit");
+    }
+    if let Some(gif) = &o.gif {
+        render::write_gif_file(
+            &o.page,
+            &data,
+            &annots,
+            &[],
+            &o.serie1,
+            &o.boites,
+            &o.suites,
+            &o.serie2,
+            &o.arbres,
+            &o.simus,
+            o.px_par_mm,
+            &PathBuf::from(gif),
+        )
+        .map_err(|e| format!("écriture de {gif} : {e}"))?;
+        println!("✔ {gif} écrit");
+    }
+    if let Some(eps) = &o.eps {
+        render::write_eps_file(
+            &o.page,
+            &data,
+            &annots,
+            &[],
+            &o.serie1,
+            &o.boites,
+            &o.suites,
+            &o.serie2,
+            &o.arbres,
+            &o.simus,
+            o.px_par_mm,
+            &PathBuf::from(eps),
+        )
+        .map_err(|e| format!("écriture de {eps} : {e}"))?;
+        println!("✔ {eps} écrit");
     }
     Ok(())
 }
