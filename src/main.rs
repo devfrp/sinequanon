@@ -11,6 +11,7 @@ mod curve;
 mod expr;
 mod grid;
 mod i18n;
+mod integration;
 mod pdf;
 mod png;
 mod preferences;
@@ -22,6 +23,7 @@ mod solve;
 mod stats;
 mod tabgen;
 mod tableau;
+mod tabval;
 
 use crate::render::CurvePolys;
 use annot::{IntegraleAnnot, PointAnnot, TangenteAnnot};
@@ -150,6 +152,11 @@ struct Opts {
     simus: Vec<crate::simu::Simulation>,
     /// objets du schéma (v1.3) : points nommés et Bézier
     schema: Vec<schema::ShObj>,
+    /// tables de valeurs (v1.4+) : liées aux courbes par index
+    tables: Vec<tabval::TableValeurs>,
+    /// courbes complètes chargées depuis la session (couleurs et
+    /// épaisseurs d'origine conservées, comme dans l'interface)
+    session_curves: Vec<Curve>,
     /// impression (v1.3) : chemin du PDF à écrire
     pdf: Option<String>,
 }
@@ -179,6 +186,8 @@ impl Default for Opts {
             arbres: Vec::new(),
             simus: Vec::new(),
             schema: Vec::new(),
+            tables: Vec::new(),
+            session_curves: Vec::new(),
             pdf: None,
         }
     }
@@ -257,6 +266,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
                 let s: session::Session = serde_json::from_str(&txt)
                     .map_err(|e| format!("session {chemin} invalide : {e}"))?;
                 o.page = s.page;
+                // les courbes de la session sont reprises telles quelles
+                o.session_curves = s.curves;
                 o.serie1 = s.stats;
                 o.boites = s.boites;
                 o.suites = s.suites;
@@ -264,6 +275,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
                 o.arbres = s.arbres;
                 o.simus = s.simus;
                 o.schema = s.schema;
+                o.tables = s.tables;
             }
             "--svg" => o.svg = Some(valeur(args, &mut i, a)?),
             "--png" => o.png = Some(valeur(args, &mut i, a)?),
@@ -284,7 +296,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
         i += 1;
     }
 
-    let mut curves = Vec::new();
+    let mut curves = o.session_curves;
     for (k, e) in o.fonctions.iter().enumerate() {
         curves.push(Curve::fonction(e.clone(), PALETTE[k % PALETTE.len()]));
     }
@@ -369,6 +381,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &curves,
+            &o.tables,
             &o.schema,
             &PathBuf::from(svg),
         )
@@ -386,6 +400,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &curves,
+            &o.tables,
             &o.schema,
             &PathBuf::from("sinequanon.svg"),
         )
@@ -404,6 +420,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &curves,
+            &o.tables,
             &o.schema,
             o.px_par_mm,
             &PathBuf::from(png),
@@ -423,6 +441,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &curves,
+            &o.tables,
             &o.schema,
             o.px_par_mm,
             &PathBuf::from(bmp),
@@ -442,6 +462,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &curves,
+            &o.tables,
             &o.schema,
             o.px_par_mm,
             &PathBuf::from(gif),
@@ -461,6 +483,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &curves,
+            &o.tables,
             &o.schema,
             o.px_par_mm,
             &PathBuf::from(eps),
@@ -484,6 +508,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &curves,
+            &o.tables,
             &o.schema,
             o.px_par_mm,
             mg,

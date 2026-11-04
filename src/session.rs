@@ -49,6 +49,9 @@ pub struct Session {
     /// schéma géométrique (v1.3) : points nommés, courbes de Bézier
     #[serde(default)]
     pub schema: Vec<crate::schema::ShObj>,
+    /// tables de valeurs (v1.4+) : liaisons courbe ; mode auto/manuel
+    #[serde(default)]
+    pub tables: Vec<crate::tabval::TableValeurs>,
 }
 
 /// Chemin du fichier de session selon la plateforme.
@@ -113,6 +116,7 @@ mod tests {
             schema: vec![crate::schema::ShObj::Pt(
                 crate::schema::PointSchema::default(),
             )],
+            tables: vec![],
         };
         let txt = serde_json::to_string(&s).unwrap();
         let back: Session = serde_json::from_str(&txt).unwrap();

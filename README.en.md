@@ -211,6 +211,19 @@ git tag v0.2.0 && git push --tags     # automatic build + release
   `src/png.rs` raster + encoder + 5×7 bitmap font · `src/i18n.rs` bilingual
   strings · `src/app.rs` interface · `src/session.rs` JSON session.
 
+## v1.4 status — Calculs: value tables and integration (man. p. 96-99)
+
+| Included | Details |
+|---|---|
+| Value table | Calculs menu; automatic mode (first value + step) or manual (constant expressions accepted: "3/4", "pi", "sqrt(2)"); one-row scroll with ◀▶; 10 rows shown as in the original |
+| Fractions | checkbox: rational values display as fractions (denominator ≤ 24), otherwise decimals truncated to 6 |
+| Target curves | functions (x, y) and parametric curves (t, x, y); polars are rejected, as in the original |
+| Copy | "Copy" button: tab-separated table to the clipboard (headers + values) |
+| Drawing | checkbox: the table is drawn on the sheet (opaque background, bold title, italic headers), editable mm position; exported in every format (SVG, PNG, BMP, GIF, EPS, PDF), placed after simulations, before the diagram |
+| Integration | Calculs menu; rectangles (left, right, midpoints) or trapezoids, n subdivisions (1..500), approximate value + lower/upper bounds; the window reuses the visible frame range |
+| Session | the interface autosave now restores the WHOLE state (2-variable series, trees, simulations, diagram and tables, which were lost since v1.0) |
+| Note | the hatched area display under a curve already exists via "Annotations/Integrals" (graphical module); numeric integration completes the menu with the value + bounds |
+
 ## Roadmap (option-by-option parity with the original 2.9.4)
 
 - ✅ v0.1 — plotting core: curves, axes, 5 × 5 mm grid, SVG/PNG, session
@@ -298,7 +311,8 @@ The simulations module (manual p. 65–74) is ported: 7 models,
   dichotomy) + automatic local extrema, points marked on the sheet
   (The value tables and the rectangle / trapezoid integration methods
   of the Calculs menu (man. p. 96-99) are still to be ported.)
-- ⬜ value tables + integration (methods, bounds)
+- ✅ v1.4 — value tables (auto/manual, fractions, copy, drawing) +
+  numeric integration (4 methods, bounds) in the Calculs menu
 - ✅ v1.2 — BMP 24-bit, GIF 256-colour (LZW) and level-2 EPS exports
   (embedded ASCIIHex image — not vector; JPG and EMF/WMF not ported)
 - ✅ v1.3 — Diagram base (named points + Bézier), Preferences

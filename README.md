@@ -268,6 +268,19 @@ plus les réglages par défaut et l'impression.
 | Impression | export PDF A4 1.4 : raster posé à l'échelle 1:1 (1 mm = 2,8346 pt) sous les marges gauche/haute des préférences, orientation portrait/paysage — bouton « PDF (sinequanon.pdf) » + option CLI `--pdf` |
 | Non porté | le reste du Schéma : segments, vecteurs, droites, cercles, ellipses, polygones, angles, zones coloriées, coniques, textes/LaTeX ; drag souris des points ; couleurs/polices des préférences sont conservées dans le fichier mais non câblées au rendu |
 
+## État v1.4 — Calculs : table de valeurs et intégration (man. p. 96-99)
+
+| Inclus | Détail |
+|---|---|
+| Table de valeurs | menu Calculs ; mode automatique (première valeur + pas) ou manuel (expressions constantes acceptées : « 3/4 », « pi », « sqrt(2) ») ; défilement d'une ligne par ◀▶ ; 10 lignes affichées comme l'original |
+| Fractions | bouton : les valeurs rationnelles s'affichent en fractions (dénominateur ≤ 24), sinon décimales tronquées à 6 |
+| Courbes visées | fonctions (x, y) et courbes paramétrées (t, x, y) ; les polaires sont refusées, comme dans l'original |
+| Copie | bouton « Copier » : table tabulée dans le presse-papier (en-têtes + valeurs) |
+| Dessin | bouton : la table se dessine sur la feuille (fond opaque, titre gras, en-têtes italiques), position en mm éditables ; exportée dans tous les formats (SVG, PNG, BMP, GIF, EPS, PDF) et posée après les simulations, avant le schéma |
+| Intégration | menu Calculs ; rectangles (gauche, droite, points-milieux) ou trapèzes, n subdivisions (1..500), valeur approchée + encadrement inscrit/exinscrit ; la fenêtre redonne les bornes du repère ouvert |
+| Session | le sauvegarde automatique de l'interface restaure désormais TOUT l'état (séries 2, arbres, simulations, schéma et tables, qui se perdaient depuis la v1.0) |
+| Nota | l'affichage graphique d'aire hachurée sous une courbe existe déjà via « Annotations/Intégrales » (module graphique) ; l'intégration numérique complète le menu par la valeur + l'encadrement |
+
 ## Feuille de route (parité option par option avec l'original 2.9.4)
 
 - ✅ v0.1 — cœur traceur : courbes, repère, grille 5 × 5 mm, SVG/PNG, session
@@ -299,7 +312,8 @@ plus les réglages par défaut et l'impression.
   dichotomie) + extrema locaux automatiques, marquage sur la feuille
   (La table de valeurs et les méthodes d'intégration par rectangles /
   trapèzes du menu Calculs (man. p. 96-99) restent à porter.)
-- ⬜ table de valeurs + intégration (méthodes, encadrement)
+- ✅ v1.4 — table de valeurs (auto/manuel, fractions, copie, dessin) +
+  intégration numérique (4 méthodes, encadrement) au menu Calculs
 - ✅ v1.2 — exports BMP 24 bits, GIF 256 couleurs (LZW) et EPS niveau 2
   (image intégrée ASCIIHex — pas vectoriel ; JPG et EMF/WMF non portés)
 - ✅ v1.3 — socle Schéma (points nommés + Bézier), Préférences

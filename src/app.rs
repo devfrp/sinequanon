@@ -6,6 +6,7 @@ use crate::annot::{self, draw_list, AnnotDraw, IntegraleAnnot, PointAnnot, Tange
 use crate::curve::{apply_style, eval_fonction, sample_curve, Curve, CurveKind, KindId, PALETTE};
 use crate::grid::Page;
 use crate::i18n::{self, Lang};
+use crate::integration::{encadrement, somme, Methode};
 use crate::pdf;
 use crate::preferences::{self, Preferences};
 use crate::render::{self, CurvePolys};
@@ -18,6 +19,7 @@ use crate::stats::{
     Style, Visualiser,
 };
 use crate::tableau::{self as tab, Piece, Tableau};
+use crate::tabval::{self, TableValeurs};
 use eframe::egui::{
     self, Align2, Color32, ComboBox, DragValue, FontId, Pos2, Rect, RichText, Sense, Stroke,
     TextEdit, Ui, Vec2,
@@ -113,6 +115,19 @@ pub struct SqApp {
     pub prefs_ouvert: bool,
     /// édition en cours dans la fenêtre des préférences
     pub pref_edit: Vec<(String, String)>,
+    /// tables de valeurs (v1.4+) et fenêtre d'édition ouverte
+    pub tables: Vec<tabval::TableValeurs>,
+    pub table_sel: Option<usize>,
+    /// fenêtre d'intégration numérique (v1.4+) : bornes, subdivisions,
+    /// méthode et dernier résultat (valeur, minorant, majorant)
+    pub integ_ouvert: bool,
+    pub integ_curve: Option<usize>,
+    pub integ_a: f64,
+    pub integ_b: f64,
+    pub integ_n: usize,
+    pub integ_methode: Methode,
+    pub integ_init: bool,
+    pub integ_res: Option<(f64, f64, f64)>,
 }
 
 /// État de la fenêtre « générer un tableau depuis une courbe ».
@@ -138,6 +153,11 @@ impl SqApp {
             stats,
             boites,
             suites,
+            serie2,
+            arbres,
+            simus,
+            schema,
+            tables,
         ) = match session::load() {
             Some(s) => (
                 s.page,
@@ -150,6 +170,11 @@ impl SqApp {
                 s.stats,
                 s.boites,
                 s.suites,
+                s.serie2,
+                s.arbres,
+                s.simus,
+                s.schema,
+                s.tables,
             ),
             None => (
                 Page::default(),
@@ -158,6 +183,11 @@ impl SqApp {
                     Curve::fonction("x^2/4 - 2", PALETTE[1]),
                 ],
                 None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -190,18 +220,28 @@ impl SqApp {
             boites,
             suites,
             suite_sel: None,
-            serie2: Vec::new(),
             serie2_sel: None,
-            arbres: Vec::new(),
             arbre_sel: None,
-            simus: Vec::new(),
+            serie2,
+            arbres,
+            simus,
+            schema,
+            tables,
             simu_sel: None,
-            schema: Vec::new(),
             sch_pt_sel: None,
             sch_bez_sel: None,
             prefs: Preferences::charger().unwrap_or_else(preferences::Preferences::standard),
             prefs_ouvert: false,
             pref_edit: Vec::new(),
+            table_sel: None,
+            integ_ouvert: false,
+            integ_curve: None,
+            integ_a: 0.0,
+            integ_b: 0.0,
+            integ_n: 10,
+            integ_methode: Methode::Gauche,
+            integ_init: false,
+            integ_res: None,
             calculs_ouvert: false,
             calc_f1: None,
             calc_f2: None,
@@ -1752,6 +1792,50 @@ impl SqApp {
                 self.calculs_ouvert = false;
             }
         }
+        if ui.button(t.calc_integration).clicked() {
+            self.integ_ouvert = !self.integ_ouvert;
+            if self.integ_ouvert {
+                if !self.integ_init {
+                    let (x0, x1) = self.page.x_range();
+                    self.integ_a = x0;
+                    self.integ_b = x1;
+                    self.integ_init = true;
+                }
+                if self.integ_curve.is_none() {
+                    self.integ_curve = self
+                        .curves
+                        .iter()
+                        .position(|c| matches!(c.kind, CurveKind::Fonction { .. }));
+                }
+                self.integ_res = None;
+            }
+        }
+        if ui.button(t.calc_table).clicked() {
+            if self.tables.is_empty() {
+                self.tables.push(TableValeurs {
+                    courbe: self
+                        .curves
+                        .iter()
+                        .position(|c| {
+                            matches!(
+                                c.kind,
+                                CurveKind::Fonction { .. } | CurveKind::Parametree { .. }
+                            )
+                        })
+                        .unwrap_or(0),
+                    auto: true,
+                    x0: -3.0,
+                    pas: 0.5,
+                    depart: 0,
+                    fractions: false,
+                    dessiner: true,
+                    x_mm: 80.0,
+                    y_mm: 8.0,
+                    ..Default::default()
+                });
+            }
+            self.table_sel = Some(0);
+        }
     }
 
     /// Fenêtre « Résoudre une équation » (v1.1) : deux fonctions ou Ox,
@@ -2154,6 +2238,8 @@ impl SqApp {
         self.schema.clear();
         self.sch_pt_sel = None;
         self.sch_bez_sel = None;
+        self.tables.clear();
+        self.table_sel = None;
         self.calc_solutions.clear();
         self.calc_extrema.clear();
         self.dirty = true;
@@ -2342,6 +2428,354 @@ impl SqApp {
         }
     }
 
+    /// Fenêtre de la table de valeurs (v1.4, man. p. 96-97) : mode
+    /// automatique (première valeur + pas), manuel (expressions
+    /// constantes acceptées), défilement d'une ligne, fractions,
+    /// copie presse-papier, position sur la feuille.
+    fn fenetre_table(&mut self, ctx: &egui::Context) {
+        let t = i18n::table(self.lang);
+        let Some(idx) = self.table_sel else {
+            return;
+        };
+        if self.tables.get(idx).is_none() {
+            self.table_sel = None;
+            return;
+        }
+        // courbes admissibles et aperçu, calculés avant l'édition
+        let cands: Vec<(usize, String)> = self
+            .curves
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| {
+                matches!(
+                    c.kind,
+                    CurveKind::Fonction { .. } | CurveKind::Parametree { .. }
+                )
+            })
+            .map(|(i, c)| (i, c.label()))
+            .collect();
+        let param = self
+            .curves
+            .get(self.tables[idx].courbe)
+            .map(|c| matches!(c.kind, CurveKind::Parametree { .. }))
+            .unwrap_or(false);
+        let apercu = self.tables[idx].lignes(&self.curves);
+        let mut ouverte = true;
+        let mut status: Option<String> = None;
+        let mut a_ajouter: Option<TableValeurs> = None;
+        let mut a_supprimer: Option<usize> = None;
+        egui::Window::new(format!("{} — {}", t.tv_titre, idx + 1))
+            .open(&mut ouverte)
+            .resizable(true)
+            .default_width(380.0)
+            .show(ctx, |ui| {
+                let dirty = &mut self.dirty;
+                let Some(tab) = self.tables.get_mut(idx) else {
+                    return;
+                };
+                ui.horizontal(|ui| {
+                    ui.label(t.stat_titre);
+                    let re = ui.add(TextEdit::singleline(&mut tab.titre).desired_width(130.0));
+                    if re.changed() {
+                        *dirty = true;
+                    }
+                    ui.label(t.tv_courbe);
+                    let sel = cands
+                        .iter()
+                        .find(|(i, _)| *i == tab.courbe)
+                        .map(|(_, s)| s.clone())
+                        .unwrap_or_else(|| "?".into());
+                    ComboBox::from_id_salt(format!("tv-courbe-{idx}"))
+                        .selected_text(sel)
+                        .width(150.0)
+                        .show_ui(ui, |ui| {
+                            for (i, l) in &cands {
+                                let s = tab.courbe == *i;
+                                if ui.selectable_label(s, l).clicked() {
+                                    tab.courbe = *i;
+                                    *dirty = true;
+                                }
+                            }
+                        });
+                });
+                ui.horizontal(|ui| {
+                    if ui.radio_value(&mut tab.auto, true, t.tv_auto).clicked() {
+                        *dirty = true;
+                    }
+                    if ui.radio_value(&mut tab.auto, false, t.tv_manuel).clicked() {
+                        *dirty = true;
+                    }
+                });
+                if tab.auto {
+                    ui.horizontal(|ui| {
+                        ui.label(t.tv_x0);
+                        let re = ui.add(DragValue::new(&mut tab.x0).speed(0.05));
+                        ui.label(t.tv_pas);
+                        let re2 = ui.add(DragValue::new(&mut tab.pas).speed(0.005));
+                        if re.changed() || re2.changed() {
+                            *dirty = true;
+                        }
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.label(t.tv_valeurs);
+                        let re = ui.add(TextEdit::singleline(&mut tab.xs_txt).desired_width(180.0));
+                        if re.changed() {
+                            *dirty = true;
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.label(t.tv_depart);
+                    if ui.button("◀").clicked() {
+                        tab.depart -= 1;
+                        *dirty = true;
+                    }
+                    // valeur de la prochaine ligne affichée
+                    ui.label(if tab.auto {
+                        tabval::nombre(tab.x0 + tab.depart as f64 * tab.pas)
+                    } else {
+                        format!("{}", tab.depart + 1)
+                    });
+                    if ui.button("▶").clicked() {
+                        tab.depart += 1;
+                        *dirty = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui.checkbox(&mut tab.fractions, t.tv_fractions).changed() {
+                        *dirty = true;
+                    }
+                    if ui.checkbox(&mut tab.dessiner, t.tv_dessiner).changed() {
+                        *dirty = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(t.tv_placer);
+                    let x = ui.add(DragValue::new(&mut tab.x_mm).speed(0.5));
+                    let y = ui.add(DragValue::new(&mut tab.y_mm).speed(0.5));
+                    if x.changed() || y.changed() {
+                        *dirty = true;
+                    }
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui.button(t.tv_copier).clicked() {
+                        if let Ok(lgs) = &apercu {
+                            let mut txt = String::new();
+                            if param {
+                                txt.push_str("t\tx\ty\n");
+                            } else {
+                                txt.push_str("x\ty\n");
+                            }
+                            for lg in lgs {
+                                if param {
+                                    txt.push_str(&format!("{}\t{}\t{}\n", lg.u, lg.v, lg.w));
+                                } else {
+                                    txt.push_str(&format!("{}\t{}\n", lg.u, lg.w));
+                                }
+                            }
+                            ctx.output_mut(|o| o.copied_text = txt);
+                            status = Some("✔ presse-papier".into());
+                        } else {
+                            status = Some("✖ table vide".into());
+                        }
+                    }
+                    if ui.button(t.tv_nouvelle).clicked() {
+                        a_ajouter = Some(tab.clone());
+                    }
+                    if ui.button(t.tv_suppr).clicked() {
+                        a_supprimer = Some(idx);
+                    }
+                });
+                ui.add_space(4.0);
+                ui.separator();
+                // aperçu de la table, calculé à chaque frame
+                match &apercu {
+                    Ok(lgs) => {
+                        egui::Grid::new(format!("tv-apercu-{idx}"))
+                            .striped(true)
+                            .show(ui, |ui| {
+                                if param {
+                                    ui.label(RichText::new("t").monospace().strong());
+                                    ui.label(RichText::new("x").monospace().strong());
+                                } else {
+                                    ui.label(RichText::new("x").monospace().strong());
+                                }
+                                ui.label(RichText::new("y").monospace().strong());
+                                ui.end_row();
+                                for lg in lgs {
+                                    ui.label(RichText::new(&lg.u).monospace());
+                                    if param {
+                                        ui.label(RichText::new(&lg.v).monospace());
+                                    }
+                                    ui.label(RichText::new(&lg.w).monospace());
+                                    ui.end_row();
+                                }
+                            });
+                    }
+                    Err(e) => {
+                        ui.add_space(2.0);
+                        ui.label(RichText::new(e).weak().small());
+                    }
+                }
+            });
+        if let Some(nv) = a_ajouter {
+            self.tables.push(nv);
+            self.table_sel = Some(self.tables.len() - 1);
+            self.dirty = true;
+        }
+        if let Some(i) = a_supprimer {
+            self.tables.remove(i);
+            self.table_sel = None;
+            self.dirty = true;
+        }
+        if let Some(m) = status {
+            self.set_status(m);
+        }
+        if !ouverte {
+            self.table_sel = None;
+        }
+    }
+
+    /// Fenêtre d'intégration numérique (v1.4, man. p. 97-99) :
+    /// rectangles (gauche, droite, points-milieux) ou trapèzes, avec
+    /// encadrement inscrit/exinscrit.
+    fn fenetre_integration(&mut self, ctx: &egui::Context) {
+        if !self.integ_ouvert {
+            return;
+        }
+        let t = i18n::table(self.lang);
+        // la courbe visée doit exister et être une fonction
+        let valide = self
+            .integ_curve
+            .and_then(|i| self.curves.get(i))
+            .map(|c| matches!(c.kind, CurveKind::Fonction { .. }))
+            .unwrap_or(false);
+        if !valide {
+            self.integ_curve = self
+                .curves
+                .iter()
+                .position(|c| matches!(c.kind, CurveKind::Fonction { .. }));
+            self.integ_res = None;
+            if self.integ_curve.is_none() {
+                let mut ouverte = true;
+                egui::Window::new(t.integ_t)
+                    .open(&mut ouverte)
+                    .show(ctx, |ui| {
+                        ui.label(RichText::new(t.calc_aucune_fonction).weak().small());
+                    });
+                if !ouverte {
+                    self.integ_ouvert = false;
+                }
+                return;
+            }
+        }
+        let cands: Vec<(usize, String)> = self
+            .curves
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| matches!(c.kind, CurveKind::Fonction { .. }))
+            .map(|(i, c)| (i, c.label()))
+            .collect();
+        let mut ouverte = true;
+        egui::Window::new(t.integ_t)
+            .open(&mut ouverte)
+            .resizable(true)
+            .default_width(390.0)
+            .show(ctx, |ui| {
+                let dirty = &mut self.dirty;
+                ui.horizontal(|ui| {
+                    ui.label(t.calc_f);
+                    if let Some(ic) = self.integ_curve {
+                        let sel = cands
+                            .iter()
+                            .find(|(i, _)| *i == ic)
+                            .map(|(_, s)| s.clone())
+                            .unwrap_or_default();
+                        ComboBox::from_id_salt("integ-courbe")
+                            .selected_text(sel)
+                            .width(150.0)
+                            .show_ui(ui, |ui| {
+                                for (i, l) in &cands {
+                                    if ui.selectable_label(*i == ic, l).clicked() {
+                                        self.integ_curve = Some(*i);
+                                        self.integ_res = None;
+                                        *dirty = true;
+                                    }
+                                }
+                            });
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(t.calc_intervalle);
+                    let a = ui.add(DragValue::new(&mut self.integ_a).speed(0.05));
+                    ui.label(t.calc_to);
+                    let b = ui.add(DragValue::new(&mut self.integ_b).speed(0.05));
+                    if a.changed() || b.changed() {
+                        self.integ_res = None;
+                        *dirty = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(t.integ_subdiv);
+                    if ui
+                        .add(DragValue::new(&mut self.integ_n).range(1..=500))
+                        .changed()
+                    {
+                        self.integ_res = None;
+                        *dirty = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    for (m, lbl) in [
+                        (Methode::Gauche, t.meth_gauche),
+                        (Methode::Droite, t.meth_droite),
+                        (Methode::Milieu, t.meth_milieu),
+                        (Methode::Trapezes, t.meth_trapezes),
+                    ] {
+                        if ui.radio_value(&mut self.integ_methode, m, lbl).clicked() {
+                            self.integ_res = None;
+                            *dirty = true;
+                        }
+                    }
+                });
+                if ui.button(t.integ_calc).clicked() {
+                    let ic = self.integ_curve.unwrap_or(0);
+                    let expr = match self.curves.get(ic).map(|c| &c.kind) {
+                        Some(CurveKind::Fonction { expr, .. }) => expr.clone(),
+                        _ => String::new(),
+                    };
+                    let n = self.integ_n.max(1);
+                    let m = self.integ_methode;
+                    let (a, b) = (self.integ_a, self.integ_b);
+                    // la fermeture capture l'expression par référence :
+                    // elle est copiable et sert aux deux calculs
+                    let f = |x: f64| eval_fonction(&expr, x).unwrap_or(f64::NAN);
+                    let v = somme(f, a, b, n, m);
+                    let (inf, sup) = encadrement(f, a, b, n);
+                    self.integ_res = Some((v, inf, sup));
+                }
+                if let Some((v, inf, sup)) = self.integ_res {
+                    ui.add_space(3.0);
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(t.integ_valeur);
+                        ui.strong(tabval::nombre(v));
+                    });
+                    ui.label(format!(
+                        "{} : {} ≤ ∫ ≤ {}",
+                        t.integ_encadre,
+                        tabval::nombre(inf),
+                        tabval::nombre(sup)
+                    ));
+                }
+            });
+        if !ouverte {
+            self.integ_ouvert = false;
+        }
+    }
+
     fn section_repere(&mut self, ui: &mut Ui) {
         let t = i18n::table(self.lang);
         ui.strong(t.repere);
@@ -2463,6 +2897,8 @@ impl SqApp {
                     &self.serie2,
                     &self.arbres,
                     &self.simus,
+                    &self.curves,
+                    &self.tables,
                     &self.schema,
                     &path,
                 ) {
@@ -2486,6 +2922,8 @@ impl SqApp {
                     &self.serie2,
                     &self.arbres,
                     &self.simus,
+                    &self.curves,
+                    &self.tables,
                     &self.schema,
                     self.px_per_mm as f64,
                     &path,
@@ -2508,6 +2946,8 @@ impl SqApp {
                     &self.serie2,
                     &self.arbres,
                     &self.simus,
+                    &self.curves,
+                    &self.tables,
                     &self.schema,
                     self.px_per_mm as f64,
                     &path,
@@ -2530,6 +2970,8 @@ impl SqApp {
                     &self.serie2,
                     &self.arbres,
                     &self.simus,
+                    &self.curves,
+                    &self.tables,
                     &self.schema,
                     self.px_per_mm as f64,
                     &path,
@@ -2552,6 +2994,8 @@ impl SqApp {
                     &self.serie2,
                     &self.arbres,
                     &self.simus,
+                    &self.curves,
+                    &self.tables,
                     &self.schema,
                     self.px_per_mm as f64,
                     &path,
@@ -2575,6 +3019,8 @@ impl SqApp {
                     &self.serie2,
                     &self.arbres,
                     &self.simus,
+                    &self.curves,
+                    &self.tables,
                     &self.schema,
                     self.px_per_mm as f64,
                     mg,
@@ -3825,6 +4271,8 @@ impl eframe::App for SqApp {
         self.fenetre_point_schema(ctx);
         self.fenetre_bezier(ctx);
         self.fenetre_preferences(ctx);
+        self.fenetre_table(ctx);
+        self.fenetre_integration(ctx);
         // sauvegarde automatique si nécessaire
         if self.dirty {
             let s = Session {
@@ -3843,6 +4291,7 @@ impl eframe::App for SqApp {
                 arbres: self.arbres.clone(),
                 simus: self.simus.clone(),
                 schema: self.schema.clone(),
+                tables: self.tables.clone(),
             };
             if session::save(&s).is_ok() {
                 self.dirty = false;

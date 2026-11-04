@@ -11,6 +11,7 @@
 //! du fichier de la struct Preferences.
 use crate::{
     annot::AnnotDraw,
+    curve::Curve,
     grid::Page,
     png,
     render::{rasterize_page, CurvePolys},
@@ -18,6 +19,7 @@ use crate::{
     simu::Simulation,
     stats::{Arbre, BoitesMultiples, Serie1, Serie2, Suite},
     tableau::Tableau,
+    tabval::TableValeurs,
 };
 use std::path::Path;
 
@@ -47,6 +49,8 @@ pub fn write_pdf_file(
     serie2: &[Serie2],
     arbres: &[Arbre],
     simus: &[Simulation],
+    courbes: &[Curve],
+    tables: &[TableValeurs],
     schema: &[ShObj],
     px_per_mm: f64,
     marge_gauche_mm: f64,
@@ -56,8 +60,8 @@ pub fn write_pdf_file(
 ) -> std::io::Result<()> {
     use std::fmt::Write as _;
     let r = rasterize_page(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, schema,
-        px_per_mm,
+        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
+        tables, schema, px_per_mm,
     );
     let (w, h) = (r.w, r.h);
     // pixels RGBA → RGB (rangées de haut en bas, comme un objet image)
@@ -162,6 +166,8 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
+            &[],
             3.0,
             15.0,
             15.0,
@@ -210,6 +216,8 @@ mod tests {
         write_pdf_file(
             &p,
             &[(c, polys)],
+            &[],
+            &[],
             &[],
             &[],
             &[],

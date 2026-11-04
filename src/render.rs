@@ -8,6 +8,7 @@ use crate::schema::ShObj;
 use crate::simu::Simulation;
 use crate::stats::{Arbre, BoitesMultiples, Piece as PieceStats, Serie1, Serie2, Suite};
 use crate::tableau::{pieces, Piece, Tableau};
+use crate::tabval::TableValeurs;
 use std::path::Path;
 
 /// Polylignes d'une courbe, en coordonnées page (mm).
@@ -148,6 +149,8 @@ pub fn svg(
     serie2: &[Serie2],
     arbres: &[Arbre],
     simus: &[Simulation],
+    courbes: &[Curve],
+    tables: &[TableValeurs],
     schema: &[ShObj],
 ) -> String {
     let p = page;
@@ -477,6 +480,10 @@ pub fn svg(
     for si in simus {
         svg_stats_pieces(&mut s, &si.draw_list(p));
     }
+    // tables de valeurs (v1.4) : le même ordre que les modules stats
+    for tv in tables {
+        svg_stats_pieces(&mut s, &tv.draw_list(courbes));
+    }
     // objets du schéma (v1.3) : après les simulations, sans déclencher
     // le mode stats (repère normal + grille en fond)
     for o in schema {
@@ -638,11 +645,14 @@ pub fn write_svg_file(
     serie2: &[Serie2],
     arbres: &[Arbre],
     simus: &[Simulation],
+    courbes: &[Curve],
+    tables: &[TableValeurs],
     schema: &[ShObj],
     path: &Path,
 ) -> std::io::Result<usize> {
     let s = svg(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, schema,
+        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
+        tables, schema,
     );
     std::fs::write(path, s.as_bytes())?;
     Ok(s.len())
@@ -908,6 +918,8 @@ pub fn rasterize_page(
     serie2: &[Serie2],
     arbres: &[Arbre],
     simus: &[Simulation],
+    courbes: &[Curve],
+    tables: &[TableValeurs],
     schema: &[ShObj],
     px_per_mm: f64,
 ) -> Raster {
@@ -964,6 +976,10 @@ pub fn rasterize_page(
     for si in simus {
         draw_stats_raster(&mut r, ppm, &si.draw_list(page));
     }
+    // tables de valeurs (v1.4)
+    for tv in tables {
+        draw_stats_raster(&mut r, ppm, &tv.draw_list(courbes));
+    }
     // schéma (v1.3) : même place qu'en SVG, sans mode stats
     for o in schema {
         draw_stats_raster(&mut r, ppm, &o.draw_list(page, schema));
@@ -984,13 +1000,15 @@ pub fn write_png_file(
     serie2: &[Serie2],
     arbres: &[Arbre],
     simus: &[Simulation],
+    courbes: &[Curve],
+    tables: &[TableValeurs],
     schema: &[ShObj],
     px_per_mm: f64,
     path: &Path,
 ) -> std::io::Result<()> {
     rasterize_page(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, schema,
-        px_per_mm,
+        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
+        tables, schema, px_per_mm,
     )
     .write_png(path)
 }
@@ -1008,13 +1026,15 @@ pub fn write_bmp_file(
     serie2: &[Serie2],
     arbres: &[Arbre],
     simus: &[Simulation],
+    courbes: &[Curve],
+    tables: &[TableValeurs],
     schema: &[ShObj],
     px_per_mm: f64,
     path: &Path,
 ) -> std::io::Result<()> {
     rasterize_page(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, schema,
-        px_per_mm,
+        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
+        tables, schema, px_per_mm,
     )
     .write_bmp(path)
 }
@@ -1032,13 +1052,15 @@ pub fn write_gif_file(
     serie2: &[Serie2],
     arbres: &[Arbre],
     simus: &[Simulation],
+    courbes: &[Curve],
+    tables: &[TableValeurs],
     schema: &[ShObj],
     px_per_mm: f64,
     path: &Path,
 ) -> std::io::Result<()> {
     rasterize_page(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, schema,
-        px_per_mm,
+        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
+        tables, schema, px_per_mm,
     )
     .write_gif(path)
 }
@@ -1057,14 +1079,16 @@ pub fn write_eps_file(
     serie2: &[Serie2],
     arbres: &[Arbre],
     simus: &[Simulation],
+    courbes: &[Curve],
+    tables: &[TableValeurs],
     schema: &[ShObj],
     px_per_mm: f64,
     path: &Path,
 ) -> std::io::Result<()> {
     use std::fmt::Write as _;
     let r = rasterize_page(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, schema,
-        px_per_mm,
+        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
+        tables, schema, px_per_mm,
     );
     let (w, h) = (r.w, r.h);
     // la zone englobante est en points PostScript (72 pt = 1 pouce) ;
@@ -1331,6 +1355,8 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
+            &[],
         );
         assert!(s.contains("viewBox=\"0 0 170.00 120.00\""), "{s}");
         assert!(s.contains("clipPath"));
@@ -1350,6 +1376,8 @@ mod tests {
         let s = svg(
             &p,
             &[(c, polys)],
+            &[],
+            &[],
             &[],
             &[],
             &[],
@@ -1394,6 +1422,8 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
+            &[],
         );
         assert!(s.contains("<pattern"), "trame manquante : {s}");
         assert!(s.contains("url(#hatch-0000cc)"), "{s}");
@@ -1425,6 +1455,8 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
+            &[],
         );
         assert!(s.matches("<circle").count() == 2, "{s}");
         assert!(s.contains("(1.000 ; 1.000)"), "{s}");
@@ -1442,6 +1474,8 @@ mod tests {
         write_png_file(
             &p,
             &[(c, polys)],
+            &[],
+            &[],
             &[],
             &[],
             &[],
@@ -1487,6 +1521,8 @@ mod tests {
             &p,
             &[(c, polys)],
             &annots,
+            &[],
+            &[],
             &[],
             &[],
             &[],
@@ -1543,7 +1579,21 @@ mod tests {
                 epaisseur: 1.0,
             }),
         ];
-        let s = svg(&p, &[], &[], &[], &[], &[], &[], &[], &[], &[], &schema);
+        let s = svg(
+            &p,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &schema,
+        );
         // croix des 4 points + nom italique
         assert!(s.matches("<line").count() >= 8, "{s}");
         assert!(s.contains("font-style=\"italic\""), "{s}");
@@ -1584,6 +1634,8 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
+            &[],
         );
         assert!(!s.contains("#0000cc"));
         let _ = CurveKind::Fonction {
@@ -1603,6 +1655,8 @@ mod tests {
             &[],
             &[],
             &[t.clone()],
+            &[],
+            &[],
             &[],
             &[],
             &[],
@@ -1632,6 +1686,8 @@ mod tests {
             &[],
             &[],
             &[t],
+            &[],
+            &[],
             &[],
             &[],
             &[],
@@ -1684,6 +1740,8 @@ mod tests {
                 &[],
                 &[],
                 &[],
+                &[],
+                &[],
                 10.0,
                 &path,
             )
@@ -1710,6 +1768,8 @@ mod tests {
                 &[],
                 &[],
                 &[t],
+                &[],
+                &[],
                 &[],
                 &[],
                 &[],
