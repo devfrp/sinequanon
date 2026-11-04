@@ -228,6 +228,19 @@ git tag v0.2.0 && git push --tags     # automatic build + release
 - ✅ v0.8 — 2-variable statistics (module v0.8): scatter plots, 8 regressions
   (weighted least squares, Mayer, polynomials *), y/x roles, covariance,
   correlation + corrected correlation
+## v1.3 status — Diagram (base), preferences and PDF printing (man. p. 89-102, 27-44)
+
+First milestone of the Diagram module: named points and Bézier curves,
+plus default settings and printing.
+
+| Included | Details |
+|---|---|
+| Diagram points | name + (x, y), cross + italic name on the sheet; entered in the "Diagram point" window (the original's mouse drag is not ported) |
+| Bézier curves | 4 named control points, tangents (AB) at A and (CD) at D, 80 Bernstein samples; missing points draw nothing (as in the original, points exist before the curve) |
+| Preferences | frame + page-layout settings window, saved to `Preferences_sqn.txt` (home folder) in the exact manual p. 90 format (`Orientation:Portrait`, French decimals accepted…) ; the "New drawing" button applies the preferences page |
+| Printing | A4 PDF 1.4 export: raster placed at 1:1 scale (1 mm = 2.8346 pt) under the left/top margins of the preferences, portrait/landscape — "PDF (sinequanon.pdf)" button + CLI option `--pdf` |
+| Not ported | the rest of the Diagram: segments/vectors/lines/circles/ellipses/polygons/angles/shaded areas/conics, texts/LaTeX; mouse drag; preference colours/fonts are kept in the file but not wired to the rendering |
+
 ## v1.1 status — Calculs: equation solver + extrema (solve module)
 
 The « Calculs » menu (solving part, manual p. 95-96) is ported:
@@ -288,7 +301,10 @@ The simulations module (manual p. 65–74) is ported: 7 models,
 - ⬜ value tables + integration (methods, bounds)
 - ✅ v1.2 — BMP 24-bit, GIF 256-colour (LZW) and level-2 EPS exports
   (embedded ASCIIHex image — not vector; JPG and EMF/WMF not ported)
-- ⬜ Bézier curves, preferences, printing
+- ✅ v1.3 — Diagram base (named points + Bézier), Preferences
+  (`Preferences_sqn.txt`, manual format), A4 PDF printing (`--pdf`)
+- ⬜ rest of the Diagram: segments/vectors/lines/circles/ellipses/
+  polygons/angles/shaded areas/conics, texts, point drag
 
 ## Credits and license
 

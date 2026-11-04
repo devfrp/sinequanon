@@ -46,6 +46,9 @@ pub struct Session {
     /// enregistrés : la graine les rejoue à l'identique
     #[serde(default)]
     pub simus: Vec<crate::simu::Simulation>,
+    /// schéma géométrique (v1.3) : points nommés, courbes de Bézier
+    #[serde(default)]
+    pub schema: Vec<crate::schema::ShObj>,
 }
 
 /// Chemin du fichier de session selon la plateforme.
@@ -107,6 +110,9 @@ mod tests {
             serie2: vec![],
             arbres: vec![],
             simus: vec![],
+            schema: vec![crate::schema::ShObj::Pt(
+                crate::schema::PointSchema::default(),
+            )],
         };
         let txt = serde_json::to_string(&s).unwrap();
         let back: Session = serde_json::from_str(&txt).unwrap();

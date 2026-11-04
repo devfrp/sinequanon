@@ -342,6 +342,25 @@ fn crc32(data: &[u8]) -> u32 {
     crc ^ 0xFFFF_FFFF
 }
 
+/// Flux zlib avec blocs deflate « stored » (non compressés) : en-tête
+/// 0x78 0x01 (CMF/FLG), blocs fragmentés à 65 535 octets max et somme
+/// adler-32 finale. Réutilisée par le PNG (IDAT) et le PDF (FlateDecode).
+pub(crate) fn zlib_store(raw: &[u8]) -> Vec<u8> {
+    let mut out = vec![0x78u8, 0x01u8];
+    let mut pos = 0usize;
+    while pos < raw.len() {
+        let n = (raw.len() - pos).min(65535);
+        let bfinal = if pos + n >= raw.len() { 1u8 } else { 0u8 };
+        out.push(bfinal);
+        out.extend_from_slice(&(n as u16).to_le_bytes());
+        out.extend_from_slice(&(!(n as u16)).to_le_bytes());
+        out.extend_from_slice(&raw[pos..pos + n]);
+        pos += n;
+    }
+    out.extend_from_slice(&adler32(raw).to_be_bytes());
+    out
+}
+
 fn adler32(data: &[u8]) -> u32 {
     let (mut a, mut b) = (1u32, 0u32);
     for &byte in data {
@@ -378,19 +397,7 @@ pub fn encode_png(w: u32, h: u32, rgb: &[u8], out: &mut Vec<u8>) {
         raw.extend_from_slice(&rgb[start..start + w as usize * 3]);
     }
     // flux zlib : en-tête + blocs deflate « stored »
-    let mut idat = vec![0x78u8, 0x01u8];
-    let mut pos = 0usize;
-    while pos < raw.len() {
-        let n = (raw.len() - pos).min(65535);
-        let bfinal = if pos + n >= raw.len() { 1u8 } else { 0u8 };
-        idat.push(bfinal);
-        idat.extend_from_slice(&(n as u16).to_le_bytes());
-        idat.extend_from_slice(&(!(n as u16)).to_le_bytes());
-        idat.extend_from_slice(&raw[pos..pos + n]);
-        pos += n;
-    }
-    idat.extend_from_slice(&adler32(&raw).to_be_bytes());
-    chunk(out, b"IDAT", &idat);
+    chunk(out, b"IDAT", &zlib_store(&raw));
     chunk(out, b"IEND", &[]);
 }
 

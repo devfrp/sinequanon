@@ -11,8 +11,11 @@ mod curve;
 mod expr;
 mod grid;
 mod i18n;
+mod pdf;
 mod png;
+mod preferences;
 mod render;
+mod schema;
 mod session;
 mod simu;
 mod solve;
@@ -145,6 +148,10 @@ struct Opts {
     arbres: Vec<stats::Arbre>,
     /// simulations statistiques (v1.0+)
     simus: Vec<crate::simu::Simulation>,
+    /// objets du schéma (v1.3) : points nommés et Bézier
+    schema: Vec<schema::ShObj>,
+    /// impression (v1.3) : chemin du PDF à écrire
+    pdf: Option<String>,
 }
 
 impl Default for Opts {
@@ -171,6 +178,8 @@ impl Default for Opts {
             serie2: Vec::new(),
             arbres: Vec::new(),
             simus: Vec::new(),
+            schema: Vec::new(),
+            pdf: None,
         }
     }
 }
@@ -254,12 +263,14 @@ fn exporter(args: &[String]) -> Result<(), String> {
                 o.serie2 = s.serie2;
                 o.arbres = s.arbres;
                 o.simus = s.simus;
+                o.schema = s.schema;
             }
             "--svg" => o.svg = Some(valeur(args, &mut i, a)?),
             "--png" => o.png = Some(valeur(args, &mut i, a)?),
             "--bmp" => o.bmp = Some(valeur(args, &mut i, a)?),
             "--gif" => o.gif = Some(valeur(args, &mut i, a)?),
             "--eps" => o.eps = Some(valeur(args, &mut i, a)?),
+            "--pdf" => o.pdf = Some(valeur(args, &mut i, a)?),
             "--px-par-mm" => o.px_par_mm = nb(&valeur(args, &mut i, a)?, a)?,
             "--largeur-mm" => o.page.width_mm = nb(&valeur(args, &mut i, a)?, a)?,
             "--hauteur-mm" => o.page.height_mm = nb(&valeur(args, &mut i, a)?, a)?,
@@ -305,6 +316,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
         && o.serie2.is_empty()
         && o.arbres.is_empty()
         && o.simus.is_empty()
+        && o.schema.is_empty()
     {
         return Err(
             "aucune courbe ni série statistique : utilisez -f, -p, -c ou --session (voir --aide)"
@@ -357,6 +369,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &o.schema,
             &PathBuf::from(svg),
         )
         .map_err(|e| format!("écriture de {svg} : {e}"))?;
@@ -373,6 +386,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &o.schema,
             &PathBuf::from("sinequanon.svg"),
         )
         .map_err(|e| format!("écriture de sinequanon.svg : {e}"))?;
@@ -390,6 +404,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &o.schema,
             o.px_par_mm,
             &PathBuf::from(png),
         )
@@ -408,6 +423,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &o.schema,
             o.px_par_mm,
             &PathBuf::from(bmp),
         )
@@ -426,6 +442,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &o.schema,
             o.px_par_mm,
             &PathBuf::from(gif),
         )
@@ -444,11 +461,38 @@ fn exporter(args: &[String]) -> Result<(), String> {
             &o.serie2,
             &o.arbres,
             &o.simus,
+            &o.schema,
             o.px_par_mm,
             &PathBuf::from(eps),
         )
         .map_err(|e| format!("écriture de {eps} : {e}"))?;
         println!("✔ {eps} écrit");
+    }
+    // impression (v1.3) : PDF A4 posé sous les marges des préférences
+    if let Some(pdf) = &o.pdf {
+        let prefs =
+            preferences::Preferences::charger().unwrap_or_else(preferences::Preferences::standard);
+        let (mg, mh) = prefs.marges();
+        pdf::write_pdf_file(
+            &o.page,
+            &data,
+            &annots,
+            &[],
+            &o.serie1,
+            &o.boites,
+            &o.suites,
+            &o.serie2,
+            &o.arbres,
+            &o.simus,
+            &o.schema,
+            o.px_par_mm,
+            mg,
+            mh,
+            prefs.portrait(),
+            &PathBuf::from(pdf),
+        )
+        .map_err(|e| format!("écriture de {pdf} : {e}"))?;
+        println!("✔ {pdf} écrit");
     }
     Ok(())
 }

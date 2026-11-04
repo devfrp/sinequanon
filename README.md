@@ -255,6 +255,19 @@ SVG : les trois sont portés, avec le même raster que le PNG.
 | Interface | boutons BMP/GIF/EPS de la section export + options CLI --bmp/--gif/--eps |
 | Non porté | JPG, EMF/WMF (formats binaires Windows) ; l'EPS de l'original est un PostScript niveau 2 — ici l'image complète est intégrée (nota : pas de tracé vectoriel) |
 
+## État v1.3 — Schéma (socle), préférences et impression PDF (man. p. 89-102, 27-44)
+
+Premier jalon du module Schéma : points nommés et courbes de Bézier,
+plus les réglages par défaut et l'impression.
+
+| Inclus | Détail |
+|---|---|
+| Points du schéma | nom + (x, y), croix + nom italique sur la feuille ; saisie dans la fenêtre « Point du schéma » (le déplacement à la souris de l'original n'est pas porté) |
+| Courbes de Bézier | 4 points de contrôle nommés, tangentes (AB) en A et (CD) en D, 80 échantillons Bernstein ; points manquants → rien ne se dessine (comme l'original, les points existent avant la courbe) |
+| Préférences | fenêtre réglages repère + mise en page, enregistrées dans `Preferences_sqn.txt` (dossier personnel) au format exact du manuel p. 90 (`Orientation :Portrait`, décimales françaises acceptées…) ; le bouton « Nouveau dessin » applique la page des préférences |
+| Impression | export PDF A4 1.4 : raster posé à l'échelle 1:1 (1 mm = 2,8346 pt) sous les marges gauche/haute des préférences, orientation portrait/paysage — bouton « PDF (sinequanon.pdf) » + option CLI `--pdf` |
+| Non porté | le reste du Schéma : segments, vecteurs, droites, cercles, ellipses, polygones, angles, zones coloriées, coniques, textes/LaTeX ; drag souris des points ; couleurs/polices des préférences sont conservées dans le fichier mais non câblées au rendu |
+
 ## Feuille de route (parité option par option avec l'original 2.9.4)
 
 - ✅ v0.1 — cœur traceur : courbes, repère, grille 5 × 5 mm, SVG/PNG, session
@@ -289,7 +302,10 @@ SVG : les trois sont portés, avec le même raster que le PNG.
 - ⬜ table de valeurs + intégration (méthodes, encadrement)
 - ✅ v1.2 — exports BMP 24 bits, GIF 256 couleurs (LZW) et EPS niveau 2
   (image intégrée ASCIIHex — pas vectoriel ; JPG et EMF/WMF non portés)
-- ⬜ courbes de Bézier, préférences, impression
+- ✅ v1.3 — socle Schéma (points nommés + Bézier), Préférences
+  (`Preferences_sqn.txt`, format du manuel), impression PDF A4 (`--pdf`)
+- ⬜ fin du Schéma : segments/vecteurs/droites/cercles/ellipses/
+  polygones/angles/zones/coniques, textes, drag des points
 
 ## Crédits et licence
 

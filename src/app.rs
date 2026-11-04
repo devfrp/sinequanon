@@ -6,7 +6,10 @@ use crate::annot::{self, draw_list, AnnotDraw, IntegraleAnnot, PointAnnot, Tange
 use crate::curve::{apply_style, eval_fonction, sample_curve, Curve, CurveKind, KindId, PALETTE};
 use crate::grid::Page;
 use crate::i18n::{self, Lang};
+use crate::pdf;
+use crate::preferences::{self, Preferences};
 use crate::render::{self, CurvePolys};
+use crate::schema::{Bezier, PointSchema, ShObj};
 use crate::session::{self, Session};
 use crate::simu::{Graphique, Modele, Simulation};
 use crate::solve;
@@ -98,6 +101,18 @@ pub struct SqApp {
     pub tab_sel: Option<usize>,
     /// fenêtre de génération depuis une courbe (état)
     pub gen: Option<GenEtat>,
+    /// objets du schéma (v1.3) : points nommés, courbes de Bézier
+    pub schema: Vec<ShObj>,
+    /// fenêtre d'édition ouverte : index du point du schéma
+    pub sch_pt_sel: Option<usize>,
+    /// fenêtre d'édition ouverte : index de la courbe de Bézier
+    pub sch_bez_sel: Option<usize>,
+    /// préférences (fichier Preferences_sqn.txt)
+    pub prefs: Preferences,
+    /// fenêtre des préférences ouverte
+    pub prefs_ouvert: bool,
+    /// édition en cours dans la fenêtre des préférences
+    pub pref_edit: Vec<(String, String)>,
 }
 
 /// État de la fenêtre « générer un tableau depuis une courbe ».
@@ -181,6 +196,12 @@ impl SqApp {
             arbre_sel: None,
             simus: Vec::new(),
             simu_sel: None,
+            schema: Vec::new(),
+            sch_pt_sel: None,
+            sch_bez_sel: None,
+            prefs: Preferences::charger().unwrap_or_else(preferences::Preferences::standard),
+            prefs_ouvert: false,
+            pref_edit: Vec::new(),
             calculs_ouvert: false,
             calc_f1: None,
             calc_f2: None,
@@ -286,7 +307,11 @@ impl SqApp {
                         ui.separator();
                         self.section_simulations(ui);
                         ui.separator();
+                        self.section_schema(ui);
+                        ui.separator();
                         self.section_calculs(ui);
+                        ui.separator();
+                        self.section_outils(ui);
                         ui.separator();
                         self.section_repere(ui);
                         ui.separator();
@@ -2023,6 +2048,300 @@ impl SqApp {
         }
     }
 
+    fn section_schema(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.horizontal(|ui| {
+            ui.strong(t.schema_t);
+            if ui.button(t.sch_m_point).clicked() {
+                self.schema.push(ShObj::Pt(PointSchema::default()));
+                self.sch_pt_sel = Some(self.schema.len() - 1);
+                self.dirty = true;
+            }
+            if ui.button(t.sch_m_bezier).clicked() {
+                self.schema.push(ShObj::Bez(Bezier::default()));
+                self.sch_bez_sel = Some(self.schema.len() - 1);
+                self.dirty = true;
+            }
+        });
+        let mut to_delete: Option<usize> = None;
+        let mut jumper_point: Option<usize> = None;
+        let mut jumper_bez: Option<usize> = None;
+        for (i, o) in self.schema.iter().enumerate() {
+            let label = match o {
+                ShObj::Pt(pt) => {
+                    let nom = if pt.nom.is_empty() {
+                        format!("{}", i + 1)
+                    } else {
+                        pt.nom.clone()
+                    };
+                    format!("{} {}  ({:.1} ; {:.1})", t.sch_m_point, nom, pt.x, pt.y)
+                }
+                ShObj::Bez(b) => format!(
+                    "{} {} → {}",
+                    t.sch_m_bezier,
+                    if b.a.is_empty() { "…" } else { b.a.as_str() },
+                    if b.d.is_empty() { "…" } else { b.d.as_str() }
+                ),
+            };
+            ui.horizontal(|ui| {
+                if ui
+                    .add(egui::Label::new(RichText::new(label).small()).sense(Sense::click()))
+                    .clicked()
+                {
+                    match o {
+                        ShObj::Pt(_) => jumper_point = Some(i),
+                        ShObj::Bez(_) => jumper_bez = Some(i),
+                    }
+                }
+                if ui.small_button("\u{2715}").clicked() {
+                    to_delete = Some(i);
+                }
+            });
+        }
+        if let Some(i) = jumper_point {
+            self.sch_pt_sel = Some(i);
+        }
+        if let Some(i) = jumper_bez {
+            self.sch_bez_sel = Some(i);
+        }
+        if let Some(i) = to_delete {
+            self.schema.remove(i);
+            self.sch_pt_sel = None;
+            self.sch_bez_sel = None;
+            self.dirty = true;
+        }
+        if self.schema.is_empty() {
+            ui.label(RichText::new(t.aucune).weak().small());
+        }
+    }
+
+    /// Outils (v1.3) : Préférences (fichier standard du manuel) et
+    /// « Nouveau dessin » (page des préférences, dessin vierge).
+    fn section_outils(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.strong(t.outils);
+        ui.horizontal(|ui| {
+            if ui.button(t.pref_t).clicked() {
+                self.prefs_ouvert = true;
+                if self.pref_edit.is_empty() {
+                    self.pref_edit = self.prefs.reglage_pages();
+                }
+            }
+            if ui.button(t.pref_nouveau).clicked() {
+                self.nouveau_dessin();
+            }
+        });
+    }
+
+    /// « Nouveau dessin » (man. p. 278) : le repère vient des
+    /// préférences, tout le reste du dessin est vidé.
+    fn nouveau_dessin(&mut self) {
+        self.page = self.prefs.page_par_defaut();
+        self.curves.clear();
+        self.selected = None;
+        self.poly.clear();
+        self.annots.clear();
+        self.points.clear();
+        self.tangentes.clear();
+        self.integrales.clear();
+        self.tableaux.clear();
+        self.stats.clear();
+        self.boites.clear();
+        self.suites.clear();
+        self.serie2.clear();
+        self.arbres.clear();
+        self.simus.clear();
+        self.schema.clear();
+        self.sch_pt_sel = None;
+        self.sch_bez_sel = None;
+        self.calc_solutions.clear();
+        self.calc_extrema.clear();
+        self.dirty = true;
+    }
+
+    fn fenetre_point_schema(&mut self, ctx: &egui::Context) {
+        let t = i18n::table(self.lang);
+        let Some(idx) = self.sch_pt_sel else {
+            return;
+        };
+        if self.schema.get(idx).is_none() || !matches!(&self.schema[idx], ShObj::Pt(_)) {
+            self.sch_pt_sel = None;
+            return;
+        }
+        let titre = match &self.schema[idx] {
+            ShObj::Pt(pt) if !pt.nom.is_empty() => pt.nom.clone(),
+            _ => format!("{} {}", t.sch_m_point, idx + 1),
+        };
+        let mut ouverte = true;
+        egui::Window::new(format!("{titre} — {}", t.sch_point_de))
+            .open(&mut ouverte)
+            .resizable(false)
+            .show(ctx, |ui| {
+                let Some(ShObj::Pt(pt)) = self.schema.get_mut(idx) else {
+                    return;
+                };
+                let mut maj = false;
+                ui.horizontal(|ui| {
+                    ui.label(t.sch_nom);
+                    ui.add(TextEdit::singleline(&mut pt.nom).desired_width(64.0));
+                    // renommer ne casse rien ici : les Bézier cite le nom
+                });
+                ui.horizontal(|ui| {
+                    ui.label(t.sch_x);
+                    maj |= ui.add(DragValue::new(&mut pt.x).speed(0.1)).changed();
+                    ui.label(t.sch_y);
+                    maj |= ui.add(DragValue::new(&mut pt.y).speed(0.1)).changed();
+                });
+                if maj {
+                    self.dirty = true;
+                }
+            });
+        if !ouverte {
+            self.sch_pt_sel = None;
+        }
+    }
+
+    /// Fenêtre d'une Bézier (man. p. 38) : les 4 points de contrôle
+    /// sont choisis parmi les points déjà définis, tangentes (AB)
+    /// en A et (CD) en D.
+    fn fenetre_bezier(&mut self, ctx: &egui::Context) {
+        let t = i18n::table(self.lang);
+        let Some(idx) = self.sch_bez_sel else {
+            return;
+        };
+        if self.schema.get(idx).is_none() || !matches!(&self.schema[idx], ShObj::Bez(_)) {
+            self.sch_bez_sel = None;
+            return;
+        }
+        // points nommés définis AVANT la courbe (l'original exige qu'ils
+        // soient définis avant la courbe de Bézier)
+        let noms: Vec<String> = self.schema[..idx]
+            .iter()
+            .filter_map(|o| match o {
+                ShObj::Pt(pt) => Some(pt.nom.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut ouverte = true;
+        egui::Window::new(t.sch_bez_de)
+            .open(&mut ouverte)
+            .resizable(false)
+            .show(ctx, |ui| {
+                if noms.len() < 4 {
+                    ui.label(RichText::new(t.sch_quatre).weak().small());
+                }
+                let Some(ShObj::Bez(b)) = self.schema.get_mut(idx) else {
+                    return;
+                };
+                let mut maj = false;
+                for (no, lbl) in [(0, "A →"), (1, "B ·"), (2, "C ·"), (3, "→ D")] {
+                    ui.horizontal(|ui| {
+                        ui.label(lbl);
+                        let courant = match no {
+                            0 => b.a.clone(),
+                            1 => b.b.clone(),
+                            2 => b.c.clone(),
+                            _ => b.d.clone(),
+                        };
+                        let affiche = if courant.is_empty() {
+                            "—".to_string()
+                        } else {
+                            courant.clone()
+                        };
+                        ComboBox::from_id_salt(format!("bez{no}"))
+                            .selected_text(affiche)
+                            .show_ui(ui, |ui| {
+                                for n in &noms {
+                                    let sel = courant == *n;
+                                    if ui.selectable_label(sel, n).clicked() {
+                                        match no {
+                                            0 => b.a = n.clone(),
+                                            1 => b.b = n.clone(),
+                                            2 => b.c = n.clone(),
+                                            _ => b.d = n.clone(),
+                                        }
+                                        maj = true;
+                                    }
+                                }
+                            });
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.label(t.couleur);
+                    maj |= ui.color_edit_button_srgb(&mut b.couleur).changed();
+                    ui.label(t.sch_ep);
+                    maj |= ui
+                        .add(DragValue::new(&mut b.epaisseur).speed(0.1))
+                        .changed();
+                });
+                if maj {
+                    self.dirty = true;
+                }
+            });
+        if !ouverte {
+            self.sch_bez_sel = None;
+        }
+    }
+
+    /// Fenêtre Préférences (man. p. 89-90) : sous-ensemble réglages du
+    /// repère et de la mise en page, éditables puis enregistrés dans
+    /// Preferences_sqn.txt au clic OK (comme l'original).
+    fn fenetre_preferences(&mut self, ctx: &egui::Context) {
+        if !self.prefs_ouvert {
+            return;
+        }
+        let t = i18n::table(self.lang);
+        if self.pref_edit.is_empty() {
+            self.pref_edit = self.prefs.reglage_pages();
+        }
+        let mut ouverte = true;
+        egui::Window::new(t.pref_t)
+            .open(&mut ouverte)
+            .resizable(true)
+            .default_width(430.0)
+            .show(ctx, |ui| {
+                ui.label(RichText::new(t.pref_texte).weak().small());
+                egui::Grid::new("preferences_sqn")
+                    .num_columns(2)
+                    .spacing([8.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(t.pref_cle).strong().small());
+                        ui.label(RichText::new(t.pref_valeur).strong().small());
+                        ui.end_row();
+                        for (k, v) in self.pref_edit.iter_mut() {
+                            ui.label(RichText::new(k.clone()).small());
+                            ui.add(TextEdit::singleline(v).desired_width(110.0));
+                            ui.end_row();
+                        }
+                    });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button(t.pref_ok).clicked() {
+                        for (k, v) in self.pref_edit.clone() {
+                            self.prefs.change(&k, &v);
+                        }
+                        match self.prefs.enregistrer() {
+                            Ok(()) => {
+                                self.set_status("✔ Preferences_sqn.txt".to_string());
+                                self.dirty = true;
+                            }
+                            Err(e) => self.set_status(format!("✖ {e}")),
+                        }
+                    }
+                    if ui.button(t.pref_std).clicked() {
+                        self.prefs = Preferences::standard();
+                        self.pref_edit = self.prefs.reglage_pages();
+                    }
+                });
+                ui.add_space(2.0);
+                ui.label(RichText::new(t.pref_note).weak().small());
+            });
+        if !ouverte {
+            self.prefs_ouvert = false;
+            self.pref_edit.clear();
+        }
+    }
+
     fn section_repere(&mut self, ui: &mut Ui) {
         let t = i18n::table(self.lang);
         ui.strong(t.repere);
@@ -2144,6 +2463,7 @@ impl SqApp {
                     &self.serie2,
                     &self.arbres,
                     &self.simus,
+                    &self.schema,
                     &path,
                 ) {
                     Ok(n) => self.set_status(format!("✔ {} écrit ({} octets)", path.display(), n)),
@@ -2166,6 +2486,7 @@ impl SqApp {
                     &self.serie2,
                     &self.arbres,
                     &self.simus,
+                    &self.schema,
                     self.px_per_mm as f64,
                     &path,
                 ) {
@@ -2187,6 +2508,7 @@ impl SqApp {
                     &self.serie2,
                     &self.arbres,
                     &self.simus,
+                    &self.schema,
                     self.px_per_mm as f64,
                     &path,
                 ) {
@@ -2208,6 +2530,7 @@ impl SqApp {
                     &self.serie2,
                     &self.arbres,
                     &self.simus,
+                    &self.schema,
                     self.px_per_mm as f64,
                     &path,
                 ) {
@@ -2229,11 +2552,38 @@ impl SqApp {
                     &self.serie2,
                     &self.arbres,
                     &self.simus,
+                    &self.schema,
                     self.px_per_mm as f64,
                     &path,
                 ) {
                     Ok(()) => self.set_status(format!("✔ {} écrit", path.display())),
                     Err(e) => self.set_status(format!("✖ Échec EPS : {e}")),
+                }
+            }
+            if ui.button("PDF (sinequanon.pdf)").clicked() {
+                let data = self.export_data();
+                let path = PathBuf::from("sinequanon.pdf");
+                let (mg, mh) = self.prefs.marges();
+                match pdf::write_pdf_file(
+                    &self.page,
+                    &data,
+                    &self.annots,
+                    &self.tableaux,
+                    &self.stats,
+                    &self.boites,
+                    &self.suites,
+                    &self.serie2,
+                    &self.arbres,
+                    &self.simus,
+                    &self.schema,
+                    self.px_per_mm as f64,
+                    mg,
+                    mh,
+                    self.prefs.portrait(),
+                    &path,
+                ) {
+                    Ok(()) => self.set_status(format!("✔ {} écrit", path.display())),
+                    Err(e) => self.set_status(format!("✖ Échec PDF : {e}")),
                 }
             }
             ui.label(t.resolution);
@@ -3472,6 +3822,9 @@ impl eframe::App for SqApp {
         self.fenetre_arbre(ctx);
         self.fenetre_simulation(ctx);
         self.fenetre_calculs(ctx);
+        self.fenetre_point_schema(ctx);
+        self.fenetre_bezier(ctx);
+        self.fenetre_preferences(ctx);
         // sauvegarde automatique si nécessaire
         if self.dirty {
             let s = Session {
@@ -3489,6 +3842,7 @@ impl eframe::App for SqApp {
                 serie2: self.serie2.clone(),
                 arbres: self.arbres.clone(),
                 simus: self.simus.clone(),
+                schema: self.schema.clone(),
             };
             if session::save(&s).is_ok() {
                 self.dirty = false;
