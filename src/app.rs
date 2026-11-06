@@ -10,7 +10,11 @@ use crate::integration::{encadrement, somme, Methode};
 use crate::pdf;
 use crate::preferences::{self, Preferences};
 use crate::render::{self, CurvePolys};
-use crate::schema::{Bezier, PointSchema, ShObj};
+use crate::schema::{
+    Angle, Bezier, CerDef, Cercle, DemiDef, DemiDroite, DirSpec, DroDef, Droite, EllDef, Ellipse,
+    Extremite, PgnDef, PointSchema, Polygone, PresetPoly, SegDef, Segment, ShObj, TexteSchema,
+    TraitStyle, Vecteur, Zone,
+};
 use crate::session::{self, Session};
 use crate::simu::{Graphique, Modele, Simulation};
 use crate::solve;
@@ -109,6 +113,12 @@ pub struct SqApp {
     pub sch_pt_sel: Option<usize>,
     /// fenêtre d'édition ouverte : index de la courbe de Bézier
     pub sch_bez_sel: Option<usize>,
+    /// fenêtre d'édition ouverte : index d'un autre objet du schéma
+    /// (v1.5), nature courante (tampon des sommets nommés) et tampon
+    pub sch_sel: Option<usize>,
+    pub sch_ed_obj: Option<usize>,
+    pub sch_ed_kind: u8,
+    pub sch_ed_txt: String,
     /// préférences (fichier Preferences_sqn.txt)
     pub prefs: Preferences,
     /// fenêtre des préférences ouverte
@@ -230,6 +240,10 @@ impl SqApp {
             simu_sel: None,
             sch_pt_sel: None,
             sch_bez_sel: None,
+            sch_sel: None,
+            sch_ed_obj: None,
+            sch_ed_kind: 0,
+            sch_ed_txt: String::new(),
             prefs: Preferences::charger().unwrap_or_else(preferences::Preferences::standard),
             prefs_ouvert: false,
             pref_edit: Vec::new(),
@@ -2147,9 +2161,51 @@ impl SqApp {
                 self.dirty = true;
             }
         });
+        // v1.5 : les autres outils du Schéma (man. p. 30-41)
+        let outils: [OutilSch; 10] = [
+            (t.sch_m_segment, || ShObj::Seg(Segment::default())),
+            (t.sch_m_vect, || ShObj::Vec(Vecteur::default())),
+            (t.sch_m_droite, || ShObj::Dro(Droite::default())),
+            (t.sch_m_demi, || ShObj::Demi(DemiDroite::default())),
+            (t.sch_m_cercle, || ShObj::Cer(Cercle::default())),
+            (t.sch_m_ellipse, || ShObj::Ell(Ellipse::default())),
+            (t.sch_m_poly, || ShObj::Pgn(Polygone::default())),
+            (t.sch_m_angle, || ShObj::Ang(Angle::default())),
+            (t.sch_m_zone, || ShObj::Zon(Zone::default())),
+            (t.sch_m_txt, || ShObj::Txt(TexteSchema::default())),
+        ];
+        ui.horizontal_wrapped(|ui| {
+            for (lbl, mk) in outils {
+                if ui.button(lbl).clicked() {
+                    self.schema.push(mk());
+                    self.sch_sel = Some(self.schema.len() - 1);
+                    self.dirty = true;
+                }
+            }
+        });
+        let vide = |s: &str| {
+            if s.is_empty() {
+                "…".to_string()
+            } else {
+                s.to_string()
+            }
+        };
+        let verr = |s: &str| format!("({})", if s.is_empty() { "…" } else { s });
+        let nom_nature = |n| match n {
+            PresetPoly::Isocele => t.sch_nat_isocele,
+            PresetPoly::Equilateral => t.sch_nat_equi,
+            PresetPoly::RectEnA => t.sch_nat_recten,
+            PresetPoly::Carre => t.sch_nat_carre,
+            PresetPoly::Rectangle => t.sch_nat_recta,
+            PresetPoly::Losange => t.sch_nat_losange,
+            PresetPoly::Pentagone => t.sch_nat_penta,
+            PresetPoly::Hexagone => t.sch_nat_hexa,
+            PresetPoly::Octogone => t.sch_nat_octa,
+        };
         let mut to_delete: Option<usize> = None;
         let mut jumper_point: Option<usize> = None;
         let mut jumper_bez: Option<usize> = None;
+        let mut jumper_ed: Option<usize> = None;
         for (i, o) in self.schema.iter().enumerate() {
             let label = match o {
                 ShObj::Pt(pt) => {
@@ -2166,6 +2222,75 @@ impl SqApp {
                     if b.a.is_empty() { "…" } else { b.a.as_str() },
                     if b.d.is_empty() { "…" } else { b.d.as_str() }
                 ),
+                ShObj::Seg(s) => match &s.def {
+                    SegDef::DeuxPoints { a, b } => {
+                        format!("{} {} — {}", t.sch_m_segment, vide(a), vide(b))
+                    }
+                    SegDef::Mediane { tri, de } => {
+                        format!("{} — {} S{}", t.sch_m_segment, tri.join("·"), de + 1)
+                    }
+                    SegDef::Hauteur { tri, de } => {
+                        format!("{} — {} S{}", t.sch_m_segment, tri.join("·"), de + 1)
+                    }
+                },
+                ShObj::Vec(v) => format!(
+                    "{} {} → {}",
+                    t.sch_m_vect,
+                    vide(&v.depart),
+                    if v.vers.is_empty() {
+                        format!("({};{})", v.u, v.v)
+                    } else {
+                        vide(&v.vers)
+                    }
+                ),
+                ShObj::Dro(d) => format!(
+                    "{} {}",
+                    t.sch_m_droite,
+                    if d.nom.is_empty() {
+                        "(D)"
+                    } else {
+                        d.nom.as_str()
+                    }
+                ),
+                ShObj::Demi(d) => {
+                    format!("{} [{}", t.sch_m_demi, vide(&d.origine))
+                }
+                ShObj::Cer(c) => format!(
+                    "{} — {}",
+                    t.sch_m_cercle,
+                    match &c.def {
+                        CerDef::CentreRayon { c, .. } => vide(c),
+                        CerDef::CentrePoint { c, .. } => vide(c),
+                        CerDef::Diametral { a, b } => format!("{}{}", verr(a), verr(b)),
+                    }
+                ),
+                ShObj::Ell(e) => format!(
+                    "{} — {}",
+                    t.sch_m_ellipse,
+                    match &e.def {
+                        EllDef::CentreAxes { c, .. } => vide(c),
+                        EllDef::Rectangle { a, b } => format!("{}{}", verr(a), verr(b)),
+                    }
+                ),
+                ShObj::Pgn(g) => format!(
+                    "{} — {}",
+                    t.sch_m_poly,
+                    match &g.def {
+                        PgnDef::Noms { sommets } => sommets.join("·"),
+                        PgnDef::Regulier { a, b, n } => {
+                            format!("{}{} n={}", vide(a), verr(b), n)
+                        }
+                        PgnDef::Parallelogramme { a, .. } => vide(a),
+                        PgnDef::Predefini { a, b, h, nature } =>
+                            format!("{}{}{} h={}", nom_nature(*nature), vide(a), verr(b), h),
+                    }
+                ),
+                ShObj::Ang(a) => format!("{} — {}", t.sch_m_angle, vide(&a.sommet)),
+                ShObj::Zon(z) => format!("{} — {}", t.sch_m_zone, z.sommets.join("·")),
+                ShObj::Txt(tx) => {
+                    let aff: String = tx.texte.chars().take(14).collect();
+                    format!("{} «{}»", t.sch_m_txt, aff)
+                }
             };
             ui.horizontal(|ui| {
                 if ui
@@ -2175,6 +2300,7 @@ impl SqApp {
                     match o {
                         ShObj::Pt(_) => jumper_point = Some(i),
                         ShObj::Bez(_) => jumper_bez = Some(i),
+                        _ => jumper_ed = Some(i),
                     }
                 }
                 if ui.small_button("\u{2715}").clicked() {
@@ -2188,10 +2314,15 @@ impl SqApp {
         if let Some(i) = jumper_bez {
             self.sch_bez_sel = Some(i);
         }
+        if let Some(i) = jumper_ed {
+            self.sch_sel = Some(i);
+        }
         if let Some(i) = to_delete {
             self.schema.remove(i);
             self.sch_pt_sel = None;
             self.sch_bez_sel = None;
+            self.sch_sel = None;
+            self.sch_ed_obj = None;
             self.dirty = true;
         }
         if self.schema.is_empty() {
@@ -2238,6 +2369,8 @@ impl SqApp {
         self.schema.clear();
         self.sch_pt_sel = None;
         self.sch_bez_sel = None;
+        self.sch_sel = None;
+        self.sch_ed_obj = None;
         self.tables.clear();
         self.table_sel = None;
         self.calc_solutions.clear();
@@ -2366,6 +2499,57 @@ impl SqApp {
             });
         if !ouverte {
             self.sch_bez_sel = None;
+        }
+    }
+
+    /// Fenêtre générique d'édition des autres objets du schéma (v1.5) :
+    /// noms de points au clavier, valeurs numériques et listes.
+    #[allow(clippy::too_many_lines)]
+    fn fenetre_schema_objet(&mut self, ctx: &egui::Context) {
+        let t = i18n::table(self.lang);
+        let Some(idx) = self.sch_sel else {
+            return;
+        };
+        if self.schema.get(idx).is_none()
+            || matches!(&self.schema[idx], ShObj::Pt(_) | ShObj::Bez(_))
+        {
+            self.sch_sel = None;
+            return;
+        }
+        // tampon d'édition des sommets nommés (zone, polygone quelconque)
+        let kind = sch_objet_kind(&self.schema[idx]);
+        if self.sch_ed_obj != Some(idx) || self.sch_ed_kind != kind {
+            self.sch_ed_obj = Some(idx);
+            self.sch_ed_kind = kind;
+            self.sch_ed_txt = sch_noms_source(&self.schema[idx]);
+        }
+        let mut ouverte = true;
+        egui::Window::new(t.sch_editer)
+            .open(&mut ouverte)
+            .show(ctx, |ui| {
+                let Some(o) = self.schema.get_mut(idx) else {
+                    return;
+                };
+                let mut maj = false;
+                match o {
+                    ShObj::Seg(s) => editeur_segment(ui, s, t, &mut maj),
+                    ShObj::Vec(v) => editeur_vecteur(ui, v, t, &mut maj),
+                    ShObj::Dro(d) => editeur_droite(ui, d, t, &mut maj),
+                    ShObj::Demi(d) => editeur_demi(ui, d, t, &mut maj),
+                    ShObj::Cer(c) => editeur_cercle(ui, c, t, &mut maj),
+                    ShObj::Ell(e) => editeur_ellipse(ui, e, t, &mut maj),
+                    ShObj::Pgn(g) => editeur_polygone(ui, g, t, &mut maj, &mut self.sch_ed_txt),
+                    ShObj::Ang(a) => editeur_angle(ui, a, t, &mut maj),
+                    ShObj::Zon(z) => editeur_zone(ui, z, t, &mut maj, &mut self.sch_ed_txt),
+                    ShObj::Txt(tx) => editeur_texte(ui, tx, t, &mut maj),
+                    ShObj::Pt(_) | ShObj::Bez(_) => {}
+                }
+                if maj {
+                    self.dirty = true;
+                }
+            });
+        if !ouverte {
+            self.sch_sel = None;
         }
     }
 
@@ -4270,6 +4454,7 @@ impl eframe::App for SqApp {
         self.fenetre_calculs(ctx);
         self.fenetre_point_schema(ctx);
         self.fenetre_bezier(ctx);
+        self.fenetre_schema_objet(ctx);
         self.fenetre_preferences(ctx);
         self.fenetre_table(ctx);
         self.fenetre_integration(ctx);
@@ -4298,4 +4483,862 @@ impl eframe::App for SqApp {
             }
         }
     }
+}
+
+// ==================================================================
+// Schéma (v1.5) : helpers de la fenêtre d'édition générique
+// ==================================================================
+
+/// Fabrique d'un outil du schéma (bouton → objet par défaut).
+type OutilSch = (&'static str, fn() -> ShObj);
+
+/// Nature courante d'un objet pour le tampon d'édition des sommets.
+fn sch_objet_kind(o: &ShObj) -> u8 {
+    match o {
+        ShObj::Seg(_) => 0,
+        ShObj::Vec(_) => 1,
+        ShObj::Dro(_) => 2,
+        ShObj::Demi(_) => 3,
+        ShObj::Cer(_) => 4,
+        ShObj::Ell(_) => 5,
+        ShObj::Pgn(g) => match &g.def {
+            PgnDef::Noms { .. } => 6,
+            PgnDef::Regulier { .. } => 7,
+            PgnDef::Parallelogramme { .. } => 8,
+            PgnDef::Predefini { .. } => 9,
+        },
+        ShObj::Ang(_) => 10,
+        ShObj::Zon(_) => 11,
+        ShObj::Txt(_) => 12,
+        ShObj::Pt(_) | ShObj::Bez(_) => 13,
+    }
+}
+
+/// Contenu initial du tampon des sommets nommés d'un objet.
+fn sch_noms_source(o: &ShObj) -> String {
+    match o {
+        ShObj::Zon(z) => z.sommets.join(" ; "),
+        ShObj::Pgn(g) => match &g.def {
+            PgnDef::Noms { sommets } => sommets.join(" ; "),
+            _ => String::new(),
+        },
+        _ => String::new(),
+    }
+}
+
+fn nom_nature(n: PresetPoly, t: &i18n::T) -> &'static str {
+    match n {
+        PresetPoly::Isocele => t.sch_nat_isocele,
+        PresetPoly::Equilateral => t.sch_nat_equi,
+        PresetPoly::RectEnA => t.sch_nat_recten,
+        PresetPoly::Carre => t.sch_nat_carre,
+        PresetPoly::Rectangle => t.sch_nat_recta,
+        PresetPoly::Losange => t.sch_nat_losange,
+        PresetPoly::Pentagone => t.sch_nat_penta,
+        PresetPoly::Hexagone => t.sch_nat_hexa,
+        PresetPoly::Octogone => t.sch_nat_octa,
+    }
+}
+
+/// Champ texte d'un nom de point.
+fn champ_nom(ui: &mut Ui, lbl: &'static str, v: &mut String, largeur: f32, maj: &mut bool) {
+    ui.label(lbl);
+    let r = ui.add(TextEdit::singleline(v).desired_width(largeur));
+    *maj |= r.changed();
+}
+
+/// Liste des extrémités (rien / flèche / rond).
+fn ui_extremite(ui: &mut Ui, id: &str, e: &mut Extremite, t: &i18n::T, maj: &mut bool) {
+    let label = match *e {
+        Extremite::Nu => t.sch_ext_nu,
+        Extremite::Fleche => t.sch_ext_fleche,
+        Extremite::Rond => t.sch_ext_rond,
+    };
+    ComboBox::from_id_salt(id)
+        .selected_text(label)
+        .show_ui(ui, |ui| {
+            for (k, lbl) in [
+                (Extremite::Nu, t.sch_ext_nu),
+                (Extremite::Fleche, t.sch_ext_fleche),
+                (Extremite::Rond, t.sch_ext_rond),
+            ] {
+                if ui.selectable_label(*e == k, lbl).clicked() {
+                    *e = k;
+                    *maj = true;
+                }
+            }
+        });
+}
+
+/// Style de trait (plein / pointillé).
+fn ui_style(ui: &mut Ui, id: &str, st: &mut TraitStyle, t: &i18n::T, maj: &mut bool) {
+    let label = match *st {
+        TraitStyle::Plein => t.sch_plein,
+        TraitStyle::Pointille => t.sch_pointille,
+    };
+    ComboBox::from_id_salt(id)
+        .selected_text(label)
+        .show_ui(ui, |ui| {
+            for (k, lbl) in [
+                (TraitStyle::Plein, t.sch_plein),
+                (TraitStyle::Pointille, t.sch_pointille),
+            ] {
+                if ui.selectable_label(*st == k, lbl).clicked() {
+                    *st = k;
+                    *maj = true;
+                }
+            }
+        });
+}
+
+fn editeur_segment(ui: &mut Ui, s: &mut Segment, t: &i18n::T, maj: &mut bool) {
+    let mut defnum = match &s.def {
+        SegDef::DeuxPoints { .. } => 0,
+        SegDef::Mediane { .. } => 1,
+        SegDef::Hauteur { .. } => 2,
+    };
+    ui.horizontal(|ui| {
+        ui.label(t.sch_def);
+        ComboBox::from_id_salt("sch_seg_def")
+            .selected_text(match defnum {
+                0 => t.sch_def_2pts,
+                1 => t.sch_seg_med,
+                _ => t.sch_seg_haut,
+            })
+            .show_ui(ui, |ui| {
+                for (k, lbl) in [
+                    (0u8, t.sch_def_2pts),
+                    (1, t.sch_seg_med),
+                    (2, t.sch_seg_haut),
+                ] {
+                    if ui.selectable_label(defnum == k, lbl).clicked() && k != defnum {
+                        defnum = k;
+                    }
+                }
+            });
+    });
+    match defnum {
+        0 if !matches!(s.def, SegDef::DeuxPoints { .. }) => {
+            s.def = SegDef::DeuxPoints {
+                a: String::new(),
+                b: String::new(),
+            };
+            *maj = true;
+        }
+        1 if !matches!(s.def, SegDef::Mediane { .. }) => {
+            s.def = SegDef::Mediane {
+                tri: Default::default(),
+                de: 0,
+            };
+            *maj = true;
+        }
+        2 if !matches!(s.def, SegDef::Hauteur { .. }) => {
+            s.def = SegDef::Hauteur {
+                tri: Default::default(),
+                de: 0,
+            };
+            *maj = true;
+        }
+        _ => {}
+    }
+    match &mut s.def {
+        SegDef::DeuxPoints { a, b } => {
+            ui.horizontal(|ui| {
+                champ_nom(ui, t.sch_depart, a, 40.0, maj);
+                champ_nom(ui, t.sch_vers, b, 40.0, maj);
+            });
+        }
+        SegDef::Mediane { tri, de } | SegDef::Hauteur { tri, de } => {
+            ui.horizontal(|ui| {
+                ui.label(t.sch_tri);
+                for le in tri.iter_mut() {
+                    let r = ui.add(TextEdit::singleline(le).desired_width(28.0));
+                    *maj |= r.changed();
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(t.sch_depart);
+                ComboBox::from_id_salt("sch_seg_de")
+                    .selected_text(format!("S{}", *de + 1))
+                    .show_ui(ui, |ui| {
+                        for k in 0..3usize {
+                            if ui
+                                .selectable_label(*de == k, format!("S{}", k + 1))
+                                .clicked()
+                            {
+                                *de = k;
+                                *maj = true;
+                            }
+                        }
+                    });
+            });
+        }
+    }
+    ui.horizontal(|ui| {
+        ui.label(t.sch_extr);
+        ui_extremite(ui, "sch_seg_deb", &mut s.debut, t, maj);
+        ui_extremite(ui, "sch_seg_fin", &mut s.fin, t, maj);
+        ui_style(ui, "sch_seg_style", &mut s.style, t, maj);
+    });
+    ui.horizontal(|ui| {
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut s.couleur).changed();
+        ui.label(t.sch_ep);
+        *maj |= ui
+            .add(DragValue::new(&mut s.epaisseur).speed(0.1))
+            .changed();
+    });
+}
+
+fn editeur_vecteur(ui: &mut Ui, v: &mut Vecteur, t: &i18n::T, maj: &mut bool) {
+    ui.horizontal(|ui| {
+        champ_nom(ui, t.sch_nom, &mut v.nom, 60.0, maj);
+        *maj |= ui
+            .checkbox(&mut v.afficher_nom, t.sch_afficher_nom)
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        champ_nom(ui, t.sch_depart, &mut v.depart, 40.0, maj);
+        champ_nom(ui, t.sch_vers, &mut v.vers, 40.0, maj);
+    });
+    if v.vers.is_empty() {
+        ui.horizontal(|ui| {
+            ui.label("u :");
+            *maj |= ui.add(DragValue::new(&mut v.u).speed(0.1)).changed();
+            ui.label("v :");
+            *maj |= ui.add(DragValue::new(&mut v.v).speed(0.1)).changed();
+        });
+    }
+    ui.horizontal(|ui| {
+        *maj |= ui.checkbox(&mut v.dessiner, t.sch_dessiner).changed();
+    });
+    ui.horizontal(|ui| {
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut v.couleur).changed();
+        ui.label(t.sch_ep);
+        *maj |= ui
+            .add(DragValue::new(&mut v.epaisseur).speed(0.1))
+            .changed();
+    });
+}
+
+fn editeur_droite(ui: &mut Ui, d: &mut Droite, t: &i18n::T, maj: &mut bool) {
+    let mut defnum = match &d.def {
+        DroDef::PtDir {
+            dir: DirSpec::DeuxPoints { .. },
+            ..
+        } => 0,
+        DroDef::PtDir {
+            dir: DirSpec::Vecteur { .. },
+            ..
+        } => 1,
+        DroDef::PtNorm {
+            dir: DirSpec::DeuxPoints { .. },
+            ..
+        } => 2,
+        DroDef::PtNorm {
+            dir: DirSpec::Vecteur { .. },
+            ..
+        } => 3,
+        DroDef::Parallele { .. } => 4,
+        DroDef::Perpendiculaire { .. } => 5,
+        DroDef::Mediatrice { .. } => 6,
+        DroDef::Bissectrice { .. } => 7,
+    };
+    ui.horizontal(|ui| {
+        ui.label(t.sch_def);
+        ComboBox::from_id_salt("sch_dro_def")
+            .selected_text(match defnum {
+                0 => t.sch_def_2pts,
+                1 => t.sch_def_vec,
+                2 => t.sch_def_norm2,
+                3 => t.sch_def_normv,
+                4 => t.sch_def_parl,
+                5 => t.sch_def_perp,
+                6 => t.sch_def_med,
+                _ => t.sch_def_bis,
+            })
+            .show_ui(ui, |ui| {
+                for (k, lbl) in [
+                    (0u8, t.sch_def_2pts),
+                    (1, t.sch_def_vec),
+                    (2, t.sch_def_norm2),
+                    (3, t.sch_def_normv),
+                    (4, t.sch_def_parl),
+                    (5, t.sch_def_perp),
+                    (6, t.sch_def_med),
+                    (7, t.sch_def_bis),
+                ] {
+                    if ui.selectable_label(defnum == k, lbl).clicked() && k != defnum {
+                        defnum = k;
+                    }
+                }
+            });
+    });
+    if !matches!(
+        (&d.def, defnum),
+        (
+            DroDef::PtDir {
+                dir: DirSpec::DeuxPoints { .. },
+                ..
+            },
+            0
+        ) | (
+            DroDef::PtDir {
+                dir: DirSpec::Vecteur { .. },
+                ..
+            },
+            1
+        ) | (
+            DroDef::PtNorm {
+                dir: DirSpec::DeuxPoints { .. },
+                ..
+            },
+            2
+        ) | (
+            DroDef::PtNorm {
+                dir: DirSpec::Vecteur { .. },
+                ..
+            },
+            3
+        ) | (DroDef::Parallele { .. }, 4)
+            | (DroDef::Perpendiculaire { .. }, 5)
+            | (DroDef::Mediatrice { .. }, 6)
+            | (DroDef::Bissectrice { .. }, 7)
+    ) {
+        d.def = match defnum {
+            0 => DroDef::PtDir {
+                pt: String::new(),
+                dir: DirSpec::DeuxPoints {
+                    a: String::new(),
+                    b: String::new(),
+                },
+            },
+            1 => DroDef::PtDir {
+                pt: String::new(),
+                dir: DirSpec::Vecteur { u: 1.0, v: 0.0 },
+            },
+            2 => DroDef::PtNorm {
+                pt: String::new(),
+                dir: DirSpec::DeuxPoints {
+                    a: String::new(),
+                    b: String::new(),
+                },
+            },
+            3 => DroDef::PtNorm {
+                pt: String::new(),
+                dir: DirSpec::Vecteur { u: 1.0, v: 0.0 },
+            },
+            4 => DroDef::Parallele {
+                pt: String::new(),
+                de: String::new(),
+            },
+            5 => DroDef::Perpendiculaire {
+                pt: String::new(),
+                de: String::new(),
+            },
+            6 => DroDef::Mediatrice {
+                a: String::new(),
+                b: String::new(),
+            },
+            _ => DroDef::Bissectrice {
+                tri: Default::default(),
+            },
+        };
+        *maj = true;
+    }
+    let est_parall = matches!(&d.def, DroDef::Parallele { .. });
+    match &mut d.def {
+        DroDef::PtDir { pt, dir } | DroDef::PtNorm { pt, dir } => match dir {
+            DirSpec::DeuxPoints { a, b } => {
+                ui.horizontal(|ui| {
+                    champ_nom(ui, t.sch_depart, pt, 40.0, maj);
+                    champ_nom(ui, "A :", a, 40.0, maj);
+                    champ_nom(ui, "B :", b, 40.0, maj);
+                });
+            }
+            DirSpec::Vecteur { u, v } => {
+                ui.horizontal(|ui| {
+                    champ_nom(ui, t.sch_depart, pt, 40.0, maj);
+                    ui.label("u :");
+                    *maj |= ui.add(DragValue::new(u).speed(0.1)).changed();
+                    ui.label("v :");
+                    *maj |= ui.add(DragValue::new(v).speed(0.1)).changed();
+                });
+            }
+        },
+        DroDef::Parallele { pt, de } | DroDef::Perpendiculaire { pt, de } => {
+            ui.horizontal(|ui| {
+                champ_nom(ui, t.sch_depart, pt, 40.0, maj);
+            });
+            ui.horizontal(|ui| {
+                let lbl = if est_parall {
+                    t.sch_def_parl
+                } else {
+                    t.sch_def_perp
+                };
+                champ_nom(ui, lbl, de, 60.0, maj);
+            });
+        }
+        DroDef::Mediatrice { a, b } => {
+            ui.horizontal(|ui| {
+                champ_nom(ui, "A :", a, 40.0, maj);
+                champ_nom(ui, "B :", b, 40.0, maj);
+            });
+        }
+        DroDef::Bissectrice { tri } => {
+            ui.horizontal(|ui| {
+                ui.label(t.sch_def_bis);
+                for le in tri.iter_mut() {
+                    let r = ui.add(TextEdit::singleline(le).desired_width(28.0));
+                    *maj |= r.changed();
+                }
+            });
+        }
+    }
+    ui.horizontal(|ui| {
+        champ_nom(ui, t.sch_nom, &mut d.nom, 60.0, maj);
+        ui_style(ui, "sch_dro_style", &mut d.style, t, maj);
+    });
+    ui.horizontal(|ui| {
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut d.couleur).changed();
+        ui.label(t.sch_ep);
+        *maj |= ui
+            .add(DragValue::new(&mut d.epaisseur).speed(0.1))
+            .changed();
+    });
+}
+
+fn editeur_demi(ui: &mut Ui, d: &mut DemiDroite, t: &i18n::T, maj: &mut bool) {
+    let mut defnum = match &d.def {
+        DemiDef::Point { .. } => 0,
+        DemiDef::Vecteur { .. } => 1,
+        DemiDef::Angle { .. } => 2,
+    };
+    ui.horizontal(|ui| {
+        champ_nom(ui, t.sch_origine, &mut d.origine, 40.0, maj);
+        ui.label(t.sch_def);
+        ComboBox::from_id_salt("sch_demi_def")
+            .selected_text(match defnum {
+                0 => t.sch_def_pt,
+                1 => t.sch_def_vec,
+                _ => t.sch_deg,
+            })
+            .show_ui(ui, |ui| {
+                for (k, lbl) in [(0u8, t.sch_def_pt), (1, t.sch_def_vec), (2, t.sch_deg)] {
+                    if ui.selectable_label(defnum == k, lbl).clicked() && k != defnum {
+                        defnum = k;
+                    }
+                }
+            });
+    });
+    match defnum {
+        0 if !matches!(d.def, DemiDef::Point { .. }) => {
+            d.def = DemiDef::Point { dir: String::new() };
+            *maj = true;
+        }
+        1 if !matches!(d.def, DemiDef::Vecteur { .. }) => {
+            d.def = DemiDef::Vecteur { u: 1.0, v: 0.0 };
+            *maj = true;
+        }
+        2 if !matches!(d.def, DemiDef::Angle { .. }) => {
+            d.def = DemiDef::Angle { deg: 45.0 };
+            *maj = true;
+        }
+        _ => {}
+    }
+    match &mut d.def {
+        DemiDef::Point { dir } => {
+            champ_nom(ui, t.sch_def_pt, dir, 40.0, maj);
+        }
+        DemiDef::Vecteur { u, v } => {
+            ui.horizontal(|ui| {
+                ui.label("u :");
+                *maj |= ui.add(DragValue::new(u).speed(0.1)).changed();
+                ui.label("v :");
+                *maj |= ui.add(DragValue::new(v).speed(0.1)).changed();
+            });
+        }
+        DemiDef::Angle { deg } => {
+            ui.horizontal(|ui| {
+                *maj |= ui.add(DragValue::new(deg).speed(1.0)).changed();
+            });
+        }
+    }
+    ui.horizontal(|ui| {
+        ui_style(ui, "sch_demi_style", &mut d.style, t, maj);
+    });
+    ui.horizontal(|ui| {
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut d.couleur).changed();
+        ui.label(t.sch_ep);
+        *maj |= ui
+            .add(DragValue::new(&mut d.epaisseur).speed(0.1))
+            .changed();
+    });
+}
+
+fn editeur_cercle(ui: &mut Ui, c: &mut Cercle, t: &i18n::T, maj: &mut bool) {
+    let mut defnum = match &c.def {
+        CerDef::CentreRayon { .. } => 0,
+        CerDef::CentrePoint { .. } => 1,
+        CerDef::Diametral { .. } => 2,
+    };
+    ui.horizontal(|ui| {
+        ui.label(t.sch_def);
+        ComboBox::from_id_salt("sch_cer_def")
+            .selected_text(match defnum {
+                0 => t.sch_cer_cr,
+                1 => t.sch_cer_cp,
+                _ => t.sch_cer_diam,
+            })
+            .show_ui(ui, |ui| {
+                for (k, lbl) in [(0u8, t.sch_cer_cr), (1, t.sch_cer_cp), (2, t.sch_cer_diam)] {
+                    if ui.selectable_label(defnum == k, lbl).clicked() && k != defnum {
+                        defnum = k;
+                    }
+                }
+            });
+    });
+    match defnum {
+        0 if !matches!(c.def, CerDef::CentreRayon { .. }) => {
+            c.def = CerDef::CentreRayon {
+                c: String::new(),
+                r: 1.0,
+            };
+            *maj = true;
+        }
+        1 if !matches!(c.def, CerDef::CentrePoint { .. }) => {
+            c.def = CerDef::CentrePoint {
+                c: String::new(),
+                p: String::new(),
+            };
+            *maj = true;
+        }
+        2 if !matches!(c.def, CerDef::Diametral { .. }) => {
+            c.def = CerDef::Diametral {
+                a: String::new(),
+                b: String::new(),
+            };
+            *maj = true;
+        }
+        _ => {}
+    }
+    match &mut c.def {
+        CerDef::CentreRayon { c: ctr, r } => {
+            ui.horizontal(|ui| {
+                champ_nom(ui, "C :", ctr, 40.0, maj);
+                ui.label(t.sch_rayon);
+                *maj |= ui.add(DragValue::new(r).speed(0.05)).changed();
+            });
+        }
+        CerDef::CentrePoint { c: ctr, p } => {
+            ui.horizontal(|ui| {
+                champ_nom(ui, "C :", ctr, 40.0, maj);
+                champ_nom(ui, "P :", p, 40.0, maj);
+            });
+        }
+        CerDef::Diametral { a, b } => {
+            ui.horizontal(|ui| {
+                champ_nom(ui, "A :", a, 40.0, maj);
+                champ_nom(ui, "B :", b, 40.0, maj);
+            });
+        }
+    }
+    ui.horizontal(|ui| {
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut c.couleur).changed();
+        ui.label(t.sch_ep);
+        *maj |= ui
+            .add(DragValue::new(&mut c.epaisseur).speed(0.1))
+            .changed();
+        let mut on = c.remplir.is_some();
+        if ui.checkbox(&mut on, t.sch_remplir).changed() {
+            c.remplir = on.then_some([250, 220, 160]);
+            *maj = true;
+        }
+        if let Some(fill) = &mut c.remplir {
+            *maj |= ui.color_edit_button_srgb(fill).changed();
+        }
+    });
+}
+
+fn editeur_ellipse(ui: &mut Ui, e: &mut Ellipse, t: &i18n::T, maj: &mut bool) {
+    let mut defnum = match &e.def {
+        EllDef::CentreAxes { .. } => 0,
+        EllDef::Rectangle { .. } => 1,
+    };
+    ui.horizontal(|ui| {
+        ui.label(t.sch_def);
+        ComboBox::from_id_salt("sch_ell_def")
+            .selected_text(if defnum == 0 {
+                t.sch_ell_ca
+            } else {
+                t.sch_ell_rect
+            })
+            .show_ui(ui, |ui| {
+                for (k, lbl) in [(0u8, t.sch_ell_ca), (1, t.sch_ell_rect)] {
+                    if ui.selectable_label(defnum == k, lbl).clicked() && k != defnum {
+                        defnum = k;
+                    }
+                }
+            });
+    });
+    match defnum {
+        0 if !matches!(e.def, EllDef::CentreAxes { .. }) => {
+            e.def = EllDef::CentreAxes {
+                c: String::new(),
+                rx: 1.0,
+                ry: 0.5,
+            };
+            *maj = true;
+        }
+        1 if !matches!(e.def, EllDef::Rectangle { .. }) => {
+            e.def = EllDef::Rectangle {
+                a: String::new(),
+                b: String::new(),
+            };
+            *maj = true;
+        }
+        _ => {}
+    }
+    match &mut e.def {
+        EllDef::CentreAxes { c: ctr, rx, ry } => {
+            ui.horizontal(|ui| {
+                champ_nom(ui, "C :", ctr, 40.0, maj);
+                ui.label("rx :");
+                *maj |= ui.add(DragValue::new(rx).speed(0.05)).changed();
+                ui.label("ry :");
+                *maj |= ui.add(DragValue::new(ry).speed(0.05)).changed();
+            });
+        }
+        EllDef::Rectangle { a, b } => {
+            ui.horizontal(|ui| {
+                champ_nom(ui, "A :", a, 40.0, maj);
+                champ_nom(ui, "B :", b, 40.0, maj);
+            });
+        }
+    }
+    ui.horizontal(|ui| {
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut e.couleur).changed();
+        ui.label(t.sch_ep);
+        *maj |= ui
+            .add(DragValue::new(&mut e.epaisseur).speed(0.1))
+            .changed();
+        let mut on = e.remplir.is_some();
+        if ui.checkbox(&mut on, t.sch_remplir).changed() {
+            e.remplir = on.then_some([220, 250, 210]);
+            *maj = true;
+        }
+        if let Some(fill) = &mut e.remplir {
+            *maj |= ui.color_edit_button_srgb(fill).changed();
+        }
+    });
+}
+
+fn editeur_polygone(ui: &mut Ui, g: &mut Polygone, t: &i18n::T, maj: &mut bool, txt: &mut String) {
+    let _ = txt; // tampon géré ci-dessous pour les sommets nommés
+    let mut defnum = match &g.def {
+        PgnDef::Noms { .. } => 0,
+        PgnDef::Regulier { .. } => 1,
+        PgnDef::Parallelogramme { .. } => 2,
+        PgnDef::Predefini { .. } => 3,
+    };
+    ui.horizontal(|ui| {
+        ui.label(t.sch_def);
+        ComboBox::from_id_salt("sch_pgn_def")
+            .selected_text(match defnum {
+                0 => t.sch_pgn_noms,
+                1 => t.sch_pgn_reg,
+                2 => t.sch_pgn_parall,
+                _ => t.sch_pgn_predef,
+            })
+            .show_ui(ui, |ui| {
+                for (k, lbl) in [
+                    (0u8, t.sch_pgn_noms),
+                    (1, t.sch_pgn_reg),
+                    (2, t.sch_pgn_parall),
+                    (3, t.sch_pgn_predef),
+                ] {
+                    if ui.selectable_label(defnum == k, lbl).clicked() && k != defnum {
+                        defnum = k;
+                    }
+                }
+            });
+    });
+    match defnum {
+        0 if !matches!(g.def, PgnDef::Noms { .. }) => {
+            g.def = PgnDef::Noms { sommets: vec![] };
+            *maj = true;
+        }
+        1 if !matches!(g.def, PgnDef::Regulier { .. }) => {
+            g.def = PgnDef::Regulier {
+                a: String::new(),
+                b: String::new(),
+                n: 5,
+            };
+            *maj = true;
+        }
+        2 if !matches!(g.def, PgnDef::Parallelogramme { .. }) => {
+            g.def = PgnDef::Parallelogramme {
+                a: String::new(),
+                b: String::new(),
+                c: String::new(),
+            };
+            *maj = true;
+        }
+        3 if !matches!(g.def, PgnDef::Predefini { .. }) => {
+            g.def = PgnDef::Predefini {
+                nature: PresetPoly::Carre,
+                a: String::new(),
+                b: String::new(),
+                h: 1.0,
+            };
+            *maj = true;
+        }
+        _ => {}
+    }
+    match &mut g.def {
+        PgnDef::Noms { sommets } => {
+            if ui
+                .add(TextEdit::singleline(txt).desired_width(180.0))
+                .changed()
+            {
+                *sommets = txt
+                    .split(';')
+                    .map(|n| n.trim().to_string())
+                    .filter(|n| !n.is_empty())
+                    .collect();
+                *maj = true;
+            }
+        }
+        PgnDef::Regulier { a, b, n } => {
+            ui.horizontal(|ui| {
+                champ_nom(ui, "A :", a, 40.0, maj);
+                champ_nom(ui, "B :", b, 40.0, maj);
+                ui.label("n :");
+                *maj |= ui.add(DragValue::new(n).speed(1).range(3..=24)).changed();
+            });
+        }
+        PgnDef::Parallelogramme { a, b, c } => {
+            ui.horizontal(|ui| {
+                champ_nom(ui, "A :", a, 40.0, maj);
+                champ_nom(ui, "B :", b, 40.0, maj);
+                champ_nom(ui, "C :", c, 40.0, maj);
+            });
+        }
+        PgnDef::Predefini { nature, a, b, h } => {
+            ui.horizontal(|ui| {
+                ComboBox::from_id_salt("sch_pgn_nat")
+                    .selected_text(nom_nature(*nature, t))
+                    .show_ui(ui, |ui| {
+                        for k in [
+                            PresetPoly::Isocele,
+                            PresetPoly::Equilateral,
+                            PresetPoly::RectEnA,
+                            PresetPoly::Carre,
+                            PresetPoly::Rectangle,
+                            PresetPoly::Losange,
+                            PresetPoly::Pentagone,
+                            PresetPoly::Hexagone,
+                            PresetPoly::Octogone,
+                        ] {
+                            if ui
+                                .selectable_label(*nature == k, nom_nature(k, t))
+                                .clicked()
+                            {
+                                *nature = k;
+                                *maj = true;
+                            }
+                        }
+                    });
+                champ_nom(ui, "A :", a, 40.0, maj);
+                champ_nom(ui, "B :", b, 40.0, maj);
+            });
+            ui.horizontal(|ui| {
+                ui.label("h :");
+                *maj |= ui.add(DragValue::new(h).speed(0.05)).changed();
+            });
+        }
+    }
+    ui.horizontal(|ui| {
+        *maj |= ui.checkbox(&mut g.sommets, t.sch_sommets_dessin).changed();
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut g.couleur).changed();
+        ui.label(t.sch_ep);
+        *maj |= ui
+            .add(DragValue::new(&mut g.epaisseur).speed(0.1))
+            .changed();
+        let mut on = g.remplir.is_some();
+        if ui.checkbox(&mut on, t.sch_remplir).changed() {
+            g.remplir = on.then_some([250, 220, 160]);
+            *maj = true;
+        }
+        if let Some(fill) = &mut g.remplir {
+            *maj |= ui.color_edit_button_srgb(fill).changed();
+        }
+    });
+}
+
+fn editeur_angle(ui: &mut Ui, a: &mut Angle, t: &i18n::T, maj: &mut bool) {
+    ui.horizontal(|ui| {
+        champ_nom(ui, "S :", &mut a.sommet, 40.0, maj);
+        champ_nom(ui, "A :", &mut a.a, 40.0, maj);
+        champ_nom(ui, "B :", &mut a.b, 40.0, maj);
+    });
+    ui.horizontal(|ui| {
+        ui.label(t.sch_rayon);
+        *maj |= ui.add(DragValue::new(&mut a.rayon).speed(0.05)).changed();
+        ui.label(RichText::new("(0 : auto)").weak().small());
+    });
+    ui.horizontal(|ui| {
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut a.couleur).changed();
+        ui.label(t.sch_ep);
+        *maj |= ui
+            .add(DragValue::new(&mut a.epaisseur).speed(0.1))
+            .changed();
+    });
+}
+
+fn editeur_zone(ui: &mut Ui, z: &mut Zone, t: &i18n::T, maj: &mut bool, txt: &mut String) {
+    ui.label(t.sch_sommets);
+    if ui
+        .add(TextEdit::singleline(txt).desired_width(180.0))
+        .changed()
+    {
+        z.sommets = txt
+            .split(';')
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .collect();
+        *maj = true;
+    }
+    ui.horizontal(|ui| {
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut z.couleur).changed();
+    });
+}
+
+fn editeur_texte(ui: &mut Ui, tx: &mut TexteSchema, t: &i18n::T, maj: &mut bool) {
+    ui.horizontal(|ui| {
+        ui.label("x :");
+        *maj |= ui.add(DragValue::new(&mut tx.x).speed(0.1)).changed();
+        ui.label("y :");
+        *maj |= ui.add(DragValue::new(&mut tx.y).speed(0.1)).changed();
+    });
+    champ_nom(ui, t.sch_txt_lbl, &mut tx.texte, 180.0, maj);
+    ui.horizontal(|ui| {
+        ui.label(t.sch_taille);
+        *maj |= ui.add(DragValue::new(&mut tx.taille).speed(0.05)).changed();
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut tx.couleur).changed();
+    });
+    ui.horizontal(|ui| {
+        *maj |= ui.checkbox(&mut tx.gras, t.sch_gras).changed();
+        *maj |= ui.checkbox(&mut tx.italique, t.sch_italique).changed();
+        *maj |= ui.checkbox(&mut tx.vertical, t.sch_vertical).changed();
+    });
 }

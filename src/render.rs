@@ -484,11 +484,9 @@ pub fn svg(
     for tv in tables {
         svg_stats_pieces(&mut s, &tv.draw_list(courbes));
     }
-    // objets du schéma (v1.3) : après les simulations, sans déclencher
-    // le mode stats (repère normal + grille en fond)
-    for o in schema {
-        svg_stats_pieces(&mut s, &o.draw_list(p, schema));
-    }
+    // schéma (v1.3 + v1.5) : zones d'abord, objets, puis textes au
+    // premier plan ; sans déclencher le mode stats (repère normal)
+    svg_stats_pieces(&mut s, &ShObj::draw_schema(p, schema));
     s.push_str("</g>\n</svg>\n");
     s
 }
@@ -980,10 +978,8 @@ pub fn rasterize_page(
     for tv in tables {
         draw_stats_raster(&mut r, ppm, &tv.draw_list(courbes));
     }
-    // schéma (v1.3) : même place qu'en SVG, sans mode stats
-    for o in schema {
-        draw_stats_raster(&mut r, ppm, &o.draw_list(page, schema));
-    }
+    // schéma (v1.3 + v1.5) : même place qu'en SVG, sans mode stats
+    draw_stats_raster(&mut r, ppm, &ShObj::draw_schema(page, schema));
     r
 }
 

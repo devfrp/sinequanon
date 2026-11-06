@@ -588,12 +588,17 @@ pub fn poly(r: &mut Raster, pts: &[(f64, f64)], c: [u8; 4]) {
     let mut xs: Vec<f64> = Vec::new();
     let y0 = ymin.floor() as i64;
     let y1 = (ymax + 1.0).ceil() as i64;
+    // toutes les arêtes, y compris la fermeture dernier → premier
+    // sommet (un polygone ouvert ne couvrirait que partiellement sa
+    // surface) ; une arête dégénérée (premier = dernier point, cas
+    // des ellipses déjà refermées) ne compte jamais comme croisement
+    let aretes: Vec<((f64, f64), (f64, f64))> = (0..pts.len())
+        .map(|i| (pts[i], pts[(i + 1) % pts.len()]))
+        .collect();
     for y in y0..y1 {
         let yc = y as f64 + 0.5;
         xs.clear();
-        for seg in pts.windows(2) {
-            let (xa, ya) = seg[0];
-            let (xb, yb) = seg[1];
+        for &((xa, ya), (xb, yb)) in &aretes {
             if (ya <= yc && yb > yc) || (yb <= yc && ya > yc) {
                 xs.push(xa + (yc - ya) * (xb - xa) / (yb - ya));
             }
@@ -760,6 +765,29 @@ impl Raster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polygone_ouvert_est_referme() {
+        // un triangle sans point dupliqué : l'arête de fermeture
+        // dernier → premier doit compter dans le remplissage
+        // (bug v1.4 : la zone sous le sommet n'était pas opaque)
+        let mut r = Raster::new(12, 12, [255, 255, 255, 255]);
+        poly(
+            &mut r,
+            &[(0.0, 0.0), (12.0, 0.0), (0.0, 12.0)],
+            [255, 0, 0, 255],
+        );
+        let pixel = |px: usize, py: usize| {
+            let i = (py * r.w + px) * 4;
+            [r.px[i], r.px[i + 1], r.px[i + 2], r.px[i + 3]]
+        };
+        // (9 ; 9) est au-delà de l'hypoténuse → blanc
+        assert_eq!(pixel(9, 9), [255, 255, 255, 255]);
+        // (2 ; 2) est dedans, avec l'arête de fermeture → rouge
+        assert_eq!(pixel(2, 2), [255, 0, 0, 255]);
+        // (9 ; 2) aussi, pour vérifier le remplissage jusqu'au bord droit
+        assert_eq!(pixel(9, 2), [255, 0, 0, 255]);
+    }
 
     #[test]
     fn bmp_24_bits_aller_retour() {

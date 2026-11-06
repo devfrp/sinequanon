@@ -281,6 +281,29 @@ plus les réglages par défaut et l'impression.
 | Session | le sauvegarde automatique de l'interface restaure désormais TOUT l'état (séries 2, arbres, simulations, schéma et tables, qui se perdaient depuis la v1.0) |
 | Nota | l'affichage graphique d'aire hachurée sous une courbe existe déjà via « Annotations/Intégrales » (module graphique) ; l'intégration numérique complète le menu par la valeur + l'encadrement |
 
+## État v1.5 — Schéma : les objets géométriques (man. p. 30-41)
+
+Le Schéma est presque complet : tous les objets du menu sont portés en
+deuxième milestone (les coniques et les textes « mathématiques »
+viendront en v1.6).
+
+| Inclus | Détail |
+|---|---|
+| Segment | par deux points ; médiane ou hauteur d'un triangle (pied par projection, comme l'original) ; extrémités nues/flèche/rond ; trait plein ou pointillé |
+| Vecteur | départ nommé + arrivée nommée, ou composantes libres (u ; v) ; nom affiché en italique optionnel |
+| Droite | 7 constructions (man. p. 31-32) : point + direction (deux points ou vecteur), point + vecteur normal, parallèle / perpendiculaire à une droite nommée, médiatrice, bissectrice d'un angle (3 points, le 2e est le sommet) ; trait clipping aux bords de la page, plein ou pointillé |
+| Demi-droite | origine nommée + direction : point nommé, vecteur (u ; v) ou angle polaire en ° |
+| Cercle | centre + rayon, centre + point du cercle, deux points diamétraux ; remplissage optionnel |
+| Ellipse | centre + demi-axes ou rectangle passes par deux points opposés ; remplissage optionnel |
+| Polygones | sommets quelconques, régulier à n côtés posé sur une arête, parallélogramme (A · B · C), 9 prédéfinis posés sur une arête (isocèle, équilatéral, rectangle en A, carré, rectangle, losange, pentagone, hexagone, octogone) avec h intégré au clic si besoin ; croix des sommets optionnelle ; remplissage optionnel |
+| Angle | marque d'angle avec arc 16 segments, balayage toujours le plus court ; rayon auto (moitié de la plus courte branche) ou imposé |
+| Zone | liste de sommets nommés remplie d'une couleur claire (fond du dessin) |
+| Texte | texte ordinaire posé en (x ; y) : gras, italique, vertical, taille et couleur |
+| Ordre de dessin | zones d'abord, puis les objets dans l'ordre de la liste, puis les textes au premier plan (man. p. 40) |
+| Interface | 10 nouveaux boutons dans la barre du Schéma ; fenêtre d'édition générique (noms de points au clavier, valeurs au compteur, listes de choix) ; les listes déroulantes de points existants ne sont pas portées (saisie au clavier, comme le reste du socle) |
+| Corrections | remplissage raster des polygones ouverts (l'arête de fermeture manquait depuis la v0.4, mise en évidence par les zones) ; PDF, SVG, PNG, BMP, GIF et EPS prennent le schéma en compte |
+
+
 ## Feuille de route (parité option par option avec l'original 2.9.4)
 
 - ✅ v0.1 — cœur traceur : courbes, repère, grille 5 × 5 mm, SVG/PNG, session
@@ -318,8 +341,15 @@ plus les réglages par défaut et l'impression.
   (image intégrée ASCIIHex — pas vectoriel ; JPG et EMF/WMF non portés)
 - ✅ v1.3 — socle Schéma (points nommés + Bézier), Préférences
   (`Preferences_sqn.txt`, format du manuel), impression PDF A4 (`--pdf`)
-- ⬜ fin du Schéma : segments/vecteurs/droites/cercles/ellipses/
-  polygones/angles/zones/coniques, textes, drag des points
+- ✅ v1.5 — objets du Schéma : segments (médiane/hauteur), vecteurs,
+  droites (7 constructions), demi-droites, cercles, ellipses, polygones
+  (9 prédéfinis, réguliers, parallélogramme), angles, zones, textes
+  ordinaires ; zones d'abord, objets dans l'ordre de la liste, textes
+  au premier plan (man. p. 40) ; correction du remplissage raster
+- ⬜ v1.6 — coniques (équations cartésiennes), textes mathématiques
+  (LaTeX), dérivée/primitive, droite d'équation réduite, courbe définie
+  point par point, inéquations (hachures), rapporteur d'angles, drag
+  des objets du Schéma à la souris
 
 ## Crédits et licence
 

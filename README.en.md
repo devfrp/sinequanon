@@ -224,6 +224,28 @@ git tag v0.2.0 && git push --tags     # automatic build + release
 | Session | the interface autosave now restores the WHOLE state (2-variable series, trees, simulations, diagram and tables, which were lost since v1.0) |
 | Note | the hatched area display under a curve already exists via "Annotations/Integrals" (graphical module); numeric integration completes the menu with the value + bounds |
 
+## v1.5 status — Diagram: geometric objects (man. p. 30-41)
+
+The Diagram is almost complete: every object of the menu is ported as
+the second milestone (conics and "mathematical" texts come in v1.6).
+
+| Included | Details |
+|---|---|
+| Segment | by two points; median or altitude of a triangle (foot by projection, as in the original); bare/arrow/dot endpoints; solid or dotted line |
+| Vector | named start + named end, or free components (u ; v); optional italic name |
+| Line | 7 constructions (man. p. 31-32): point + direction (two points or vector), point + normal vector, parallel / perpendicular to a named line, perpendicular bisector, angle bisector (3 points, the 2nd is the vertex); clipped to the page edges, solid or dotted |
+| Ray | named origin + direction: named point, vector (u ; v) or polar angle in ° |
+| Circle | center + radius, center + circle point, two diametral points; optional fill |
+| Ellipse | center + semi-axes, or rectangle through two opposite corners; optional fill |
+| Polygons | arbitrary vertices, regular n-gon on an edge, parallelogram (A · B · C), 9 predefined shapes on an edge (isosceles, equilateral, right-angled at A, square, rectangle, rhombus, pentagon, hexagon, octagon) with editable h; optional vertex crosses; optional fill |
+| Angle | angle mark with 16-segment arc, always the shortest sweep; automatic radius (half the shortest leg) or forced |
+| Area | list of named vertices filled with a light colour (background of the drawing) |
+| Text | ordinary text placed at (x, y): bold, italic, vertical, size and colour |
+| Drawing order | areas first, then objects in list order, then texts on top (man. p. 40) |
+| Interface | 10 new buttons in the Diagram toolbar; generic edit window (point names typed on the keyboard, spinner values, combo boxes); drop-down lists of existing points are not ported (keyboard input, like the rest of the base) |
+| Fixes | raster fill of open polygons (the closing edge was missing since v0.4, revealed by areas); PDF, SVG, PNG, BMP, GIF and EPS all render the diagram |
+
+
 ## Roadmap (option-by-option parity with the original 2.9.4)
 
 - ✅ v0.1 — plotting core: curves, axes, 5 × 5 mm grid, SVG/PNG, session
@@ -317,8 +339,15 @@ The simulations module (manual p. 65–74) is ported: 7 models,
   (embedded ASCIIHex image — not vector; JPG and EMF/WMF not ported)
 - ✅ v1.3 — Diagram base (named points + Bézier), Preferences
   (`Preferences_sqn.txt`, manual format), A4 PDF printing (`--pdf`)
-- ⬜ rest of the Diagram: segments/vectors/lines/circles/ellipses/
-  polygons/angles/shaded areas/conics, texts, point drag
+- ✅ v1.5 — Diagram objects: segments (median/altitude), vectors,
+  lines (7 constructions), rays, circles, ellipses, polygons (9
+  predefined, regular, parallelogram), angles, areas, ordinary texts;
+  areas first, objects in list order, texts on top (man. p. 40);
+  raster fill fix
+- ⬜ v1.6 — conics (Cartesian equations), mathematical texts (LaTeX),
+  derivative/antiderivative, line from reduced equation, curve defined
+  point by point, inequalities (hatching), angle protractor, mouse
+  drag of Diagram objects
 
 ## Credits and license
 
