@@ -246,6 +246,27 @@ the second milestone (conics and "mathematical" texts come in v1.6).
 | Fixes | raster fill of open polygons (the closing edge was missing since v0.4, revealed by areas); PDF, SVG, PNG, BMP, GIF and EPS all render the diagram |
 
 
+## v1.6 status — Conics, mathematical texts, inequalities, protractor
+
+The fourth family of curves (man. p. 19-24) and the last Diagram objects
+(conics man. p. 35-37, inequalities p. 80, protractor p. 87-88) are
+ported, along with a preview fix that dates back to v1.3.
+
+| Included | Details |
+|---|---|
+| Mathematical text | LaTeX expressions placed at (x, y): \frac{…}{…}, \sqrt{…}, subscripts and superscripts, \pi and Greek letters (α β γ δ ε λ μ ρ σ τ φ Φ ω Σ Δ), colours \blue \red \green \black; rendered in every export |
+| Conic | focus + directrix + eccentricity definition (e < 1 → ellipse, e = 1 → parabola, e > 1 → hyperbola) or Cartesian equation ax² + bxy + cy² + dx + ey + f = 0; optional tracing of: centre, focal point(s), directrix(es), axis(es), vertex/vertices, asymptote(s) (man. p. 35-37) |
+| Derivative / antiderivative | two new curve natures: f′ via symmetric differences, antiderivative F via composite Simpson with F(x₀) = y₀, both driven by an expression entered in full (man. p. 19) |
+| Line from reduced equation | eighth construction: y = m·x + p entered directly; labels of Diagram objects are clamped inside the page |
+| Curve point by point | list of points (x, y; optional slope in degrees), up to 20, smoothing 0..200; with slopes: Bézier arcs (Hermite), without: Catmull-Rom; closed when the last point equals the first; value lookup and value tables supported (man. p. 22-24) |
+| Inequalities | system of at most 10 linear constraints a·x + b·y + c ≥ 0 or ≤ 0 (strict or not); the solution area OR its complement is hatched at 45°, adjustable spacing (3 mm default); intersection computed in sheet coordinates (Sutherland–Hodgman clipping) (man. p. 80) |
+| Protractor | centre in page mm and radius in true mm (40 to 100, independent of the coordinate system); high-school type: trigonometric counterclockwise graduations in degrees and radians (notable angles); middle-school type: clockwise graduations from 0 at the west like a ruler, full circle or half circle sitting on its baseline; inner grid; "simple unit circle" mode (no graduation marks); "notable values" = dashed rays at multiples of 30°/45° (simplified take on the original option) (man. p. 87-88) |
+| Interface | 13th Diagram button (protractor); dedicated edit windows for mathematical texts, conics and the protractor |
+| GUI preview | fix for a gap dating back to v1.3: the Diagram is now drawn in the on-screen preview (previously it appeared only in exports) |
+| Vertical texts | bitmap raster aligned for good: vertical text = −90° rotation (read bottom-up), identical to the SVG and the manual's "⁄" angle |
+| Not ported | mouse drag of Diagram objects (every object, including the protractor, is placed by coordinates); radian labels at non-notable multiples of 15° |
+
+
 ## Roadmap (option-by-option parity with the original 2.9.4)
 
 - ✅ v0.1 — plotting core: curves, axes, 5 × 5 mm grid, SVG/PNG, session
@@ -344,10 +365,10 @@ The simulations module (manual p. 65–74) is ported: 7 models,
   predefined, regular, parallelogram), angles, areas, ordinary texts;
   areas first, objects in list order, texts on top (man. p. 40);
   raster fill fix
-- ⬜ v1.6 — conics (Cartesian equations), mathematical texts (LaTeX),
-  derivative/antiderivative, line from reduced equation, curve defined
-  point by point, inequalities (hatching), angle protractor, mouse
-  drag of Diagram objects
+- ✅ v1.6 — conics, mathematical texts (LaTeX), derivative/antiderivative,
+  line from reduced equation, curve defined point by point, inequalities
+  (hatching), angle protractor (mouse drag of Diagram objects remains
+  not ported)
 
 ## Credits and license
 

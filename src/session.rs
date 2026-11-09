@@ -49,6 +49,12 @@ pub struct Session {
     /// schéma géométrique (v1.3) : points nommés, courbes de Bézier
     #[serde(default)]
     pub schema: Vec<crate::schema::ShObj>,
+    /// droites par équation réduite (v1.6) : « y = … » ou « x = … »
+    #[serde(default)]
+    pub droites: Vec<crate::droite::DroiteEq>,
+    /// systèmes d'inéquations (v1.6)
+    #[serde(default)]
+    pub ineqs: Vec<crate::ineq::SystemeIneq>,
     /// tables de valeurs (v1.4+) : liaisons courbe ; mode auto/manuel
     #[serde(default)]
     pub tables: Vec<crate::tabval::TableValeurs>,
@@ -116,6 +122,8 @@ mod tests {
             schema: vec![crate::schema::ShObj::Pt(
                 crate::schema::PointSchema::default(),
             )],
+            droites: vec![],
+            ineqs: vec![],
             tables: vec![],
         };
         let txt = serde_json::to_string(&s).unwrap();

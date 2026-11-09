@@ -4,16 +4,19 @@
 
 use crate::annot::{self, draw_list, AnnotDraw, IntegraleAnnot, PointAnnot, TangenteAnnot};
 use crate::curve::{apply_style, eval_fonction, sample_curve, Curve, CurveKind, KindId, PALETTE};
+use crate::droite::{self, DroiteEq};
 use crate::grid::Page;
 use crate::i18n::{self, Lang};
+use crate::ineq::SystemeIneq;
 use crate::integration::{encadrement, somme, Methode};
 use crate::pdf;
 use crate::preferences::{self, Preferences};
 use crate::render::{self, CurvePolys};
 use crate::schema::{
-    Angle, Bezier, CerDef, Cercle, DemiDef, DemiDroite, DirSpec, DroDef, Droite, EllDef, Ellipse,
-    Extremite, PgnDef, PointSchema, Polygone, PresetPoly, SegDef, Segment, ShObj, TexteSchema,
-    TraitStyle, Vecteur, Zone,
+    Angle, Bezier, CerDef, Cercle, ConDef, Conique, DemiDef, DemiDroite, DirSpec, Directrice,
+    DroDef, Droite, EllDef, Ellipse, Extremite, GenreRap, PgnDef, PointSchema, Polygone,
+    PresetPoly, Rapporteur, SegDef, Segment, ShObj, TexSchema, TexteSchema, TraitStyle, Vecteur,
+    Zone,
 };
 use crate::session::{self, Session};
 use crate::simu::{Graphique, Modele, Simulation};
@@ -25,8 +28,8 @@ use crate::stats::{
 use crate::tableau::{self as tab, Piece, Tableau};
 use crate::tabval::{self, TableValeurs};
 use eframe::egui::{
-    self, Align2, Color32, ComboBox, DragValue, FontId, Pos2, Rect, RichText, Sense, Stroke,
-    TextEdit, Ui, Vec2,
+    self, Align2, Color32, ComboBox, DragValue, FontId, Pos2, Rect, RichText, ScrollArea, Sense,
+    Stroke, TextEdit, Ui, Vec2,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -128,6 +131,12 @@ pub struct SqApp {
     /// tables de valeurs (v1.4+) et fenêtre d'édition ouverte
     pub tables: Vec<tabval::TableValeurs>,
     pub table_sel: Option<usize>,
+    /// droites par équation réduite (v1.6) et fenêtre d'édition ouverte
+    pub droites: Vec<droite::DroiteEq>,
+    pub droite_sel: Option<usize>,
+    /// systèmes d'inéquations (v1.6) et fenêtre d'édition ouverte
+    pub ineqs: Vec<SystemeIneq>,
+    pub ineq_sel: Option<usize>,
     /// fenêtre d'intégration numérique (v1.4+) : bornes, subdivisions,
     /// méthode et dernier résultat (valeur, minorant, majorant)
     pub integ_ouvert: bool,
@@ -167,6 +176,8 @@ impl SqApp {
             arbres,
             simus,
             schema,
+            droites,
+            ineqs,
             tables,
         ) = match session::load() {
             Some(s) => (
@@ -184,6 +195,8 @@ impl SqApp {
                 s.arbres,
                 s.simus,
                 s.schema,
+                s.droites,
+                s.ineqs,
                 s.tables,
             ),
             None => (
@@ -193,6 +206,8 @@ impl SqApp {
                     Curve::fonction("x^2/4 - 2", PALETTE[1]),
                 ],
                 None,
+                Vec::new(),
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -237,6 +252,10 @@ impl SqApp {
             simus,
             schema,
             tables,
+            droites,
+            droite_sel: None,
+            ineqs,
+            ineq_sel: None,
             simu_sel: None,
             sch_pt_sel: None,
             sch_bez_sel: None,
@@ -346,6 +365,10 @@ impl SqApp {
                         self.section_liste(ui);
                         ui.separator();
                         self.section_proprietes(ui);
+                        ui.separator();
+                        self.section_droites(ui);
+                        ui.separator();
+                        self.section_ineqs(ui);
                         ui.separator();
                         self.section_annotations(ui);
                         ui.separator();
@@ -494,12 +517,18 @@ impl SqApp {
                 KindId::Fonction => t.l_fonction,
                 KindId::Parametree => t.l_param,
                 KindId::Polaire => t.l_polaire,
+                KindId::Derivee => t.l_derivee,
+                KindId::Primitive => t.l_primitive,
+                KindId::Ppk => t.l_ppk,
             })
             .show_ui(ui, |ui| {
                 for (id, name) in [
                     (KindId::Fonction, t.l_fonction),
                     (KindId::Parametree, t.l_param),
                     (KindId::Polaire, t.l_polaire),
+                    (KindId::Derivee, t.l_derivee),
+                    (KindId::Primitive, t.l_primitive),
+                    (KindId::Ppk, t.l_ppk),
                 ] {
                     if ui.selectable_label(kind_id == id, name).clicked() && kind_id != id {
                         curve.kind = curve.kind.convert(id);
@@ -572,6 +601,105 @@ impl SqApp {
                     }
                 });
             }
+            CurveKind::Derivee { expr } => {
+                // courbe de f′ : f saisie in extenso (man. p. 19)
+                ui.horizontal(|ui| {
+                    ui.label("f(x) =");
+                    if ui
+                        .add(TextEdit::singleline(expr).desired_width(f32::INFINITY))
+                        .changed()
+                    {
+                        self.dirty = true;
+                    }
+                });
+            }
+            CurveKind::Primitive { expr, x0, y0 } => {
+                // primitive passant par (x0 ; y0) (man. p. 19)
+                ui.horizontal(|ui| {
+                    ui.label("f(x) =");
+                    if ui
+                        .add(TextEdit::singleline(expr).desired_width(f32::INFINITY))
+                        .changed()
+                    {
+                        self.dirty = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(t.passe_par);
+                    if ui.add(DragValue::new(x0).speed(0.1)).changed() {
+                        self.dirty = true;
+                    }
+                    if ui.add(DragValue::new(y0).speed(0.1)).changed() {
+                        self.dirty = true;
+                    }
+                });
+            }
+            CurveKind::Ppk { pts, lissage } => {
+                // courbe point par point (man. p. 22-24) : table des
+                // points (20 max), pente vide = interpolation auto ;
+                // lissage Catmull-Rom 0..=200, défaut 50
+                ui.add_space(2.0);
+                ScrollArea::vertical()
+                    .id_salt("ppk-pts")
+                    .max_height(ui.available_height() - ui.spacing().interact_size.y * 3.5)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.small(t.pts_x);
+                            ui.add_space(46.0);
+                            ui.small(t.pts_y);
+                            ui.add_space(46.0);
+                            ui.small(t.pts_pente);
+                        });
+                        ui.separator();
+                        let n_avant = pts.len();
+                        let mut suppr: Option<usize> = None;
+                        for (i, p) in pts.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{:>2}", i + 1));
+                                if ui.add(DragValue::new(&mut p.x).speed(0.1)).changed() {
+                                    self.dirty = true;
+                                }
+                                if ui.add(DragValue::new(&mut p.y).speed(0.1)).changed() {
+                                    self.dirty = true;
+                                }
+                                let resp =
+                                    ui.add(TextEdit::singleline(&mut p.pente).desired_width(52.0));
+                                if resp.changed() {
+                                    self.dirty = true;
+                                }
+                                if ui.small_button("🗑").clicked() && n_avant > 2 {
+                                    suppr = Some(i);
+                                }
+                            });
+                        }
+                        if let Some(i) = suppr {
+                            pts.remove(i);
+                            self.dirty = true;
+                        }
+                    });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui.button(t.ajouter_pt).clicked() && pts.len() < crate::ppk::MAX_PTS {
+                        let (x, y) = if let Some(last) = pts.last() {
+                            (last.x + 1.0, last.y)
+                        } else {
+                            (0.0, 0.0)
+                        };
+                        pts.push(crate::ppk::PpkPt::nouveau(x, y));
+                        self.dirty = true;
+                    }
+                    if ui.button(t.supprimer_pt).clicked() && pts.len() > 2 {
+                        pts.pop();
+                        self.dirty = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(t.lissage);
+                    if ui.add(egui::Slider::new(lissage, 0.0..=200.0)).changed() {
+                        self.dirty = true;
+                    }
+                });
+            }
         }
 
         // style
@@ -614,6 +742,262 @@ impl SqApp {
                     .color(Color32::RED),
             );
         }
+    }
+
+    /// Panneau des droites par équation réduite (man. p. 25) : 10
+    /// équations « y = … » ou « x = … », dessin + étiquette, format.
+    fn section_droites(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.horizontal(|ui| {
+            ui.strong(t.droites);
+            if ui.button(t.ajouter).clicked() && self.droites.len() < 10 {
+                let n = self.droites.len();
+                self.droites.push(DroiteEq {
+                    eq: "y = x".into(),
+                    visible: true,
+                    afficher_eq: false,
+                    color: PALETTE[n % PALETTE.len()],
+                    ..Default::default()
+                });
+                self.droite_sel = Some(self.droites.len() - 1);
+                self.dirty = true;
+            }
+            if ui.button(t.vider).clicked() {
+                self.droites.clear();
+                self.droite_sel = None;
+                self.dirty = true;
+            }
+        });
+        if self.droites.is_empty() {
+            ui.label(RichText::new(t.aucune).weak().small());
+            return;
+        }
+        let mut to_delete: Option<usize> = None;
+        for i in 0..self.droites.len() {
+            let d = &mut self.droites[i];
+            ui.horizontal(|ui| {
+                let [r, g, b] = d.color;
+                let swatch = Color32::from_rgb(r, g, b);
+                let vis_text = if d.visible { "◉" } else { "○" };
+                if ui
+                    .add(
+                        egui::Label::new(RichText::new(vis_text).color(swatch).size(14.0))
+                            .sense(Sense::click()),
+                    )
+                    .clicked()
+                {
+                    d.visible = !d.visible;
+                    self.dirty = true;
+                }
+                let resp = ui.add(TextEdit::singleline(&mut d.eq).desired_width(168.0));
+                if resp.changed() || resp.gained_focus() {
+                    if resp.gained_focus() {
+                        self.droite_sel = Some(i);
+                    }
+                    self.dirty = true;
+                }
+                if ui.small_button("✕").clicked() {
+                    to_delete = Some(i);
+                }
+            });
+            // erreur d'analyse sous la ligne saisie
+            if !d.eq.trim().is_empty() {
+                if let Err(msg) = droite::analyse(&d.eq) {
+                    ui.label(
+                        RichText::new(format!("⚠ {msg}"))
+                            .small()
+                            .color(Color32::RED),
+                    );
+                }
+            }
+        }
+        if let Some(i) = to_delete {
+            self.droites.remove(i);
+            self.droite_sel = None;
+            self.dirty = true;
+        }
+        // format de la droite sélectionnée (man. p. 25 : couleur,
+        // épaisseur 0,1..1, style, case « équation sur la droite »)
+        if let Some(sel) = self.droite_sel {
+            let Some(d) = self.droites.get_mut(sel) else {
+                self.droite_sel = None;
+                return;
+            };
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(t.couleur);
+                let old = Color32::from_rgb(d.color[0], d.color[1], d.color[2]);
+                let mut c = old;
+                ui.color_edit_button_srgba(&mut c);
+                if c != old {
+                    d.color = [c.r(), c.g(), c.b()];
+                    self.dirty = true;
+                }
+                ui.label(t.epaisseur);
+                if ui
+                    .add(egui::Slider::new(&mut d.thickness, 0.1..=1.0))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(t.style);
+                for (st, name) in [
+                    (crate::curve::LineStyle::Continu, t.continu),
+                    (crate::curve::LineStyle::Tirets, t.tirets),
+                    (crate::curve::LineStyle::Pointilles, t.pointilles),
+                ] {
+                    if ui.selectable_label(d.style == st, name).clicked() && d.style != st {
+                        d.style = st;
+                        self.dirty = true;
+                    }
+                }
+                if ui.checkbox(&mut d.afficher_eq, t.eq_sur_droite).changed() {
+                    self.dirty = true;
+                }
+            });
+        }
+    }
+
+    /// Panneau des systèmes d'inéquations (man. p. 80) : 10 systèmes,
+    /// 10 inéquations chacun (a, b, c, nature), hachure solution ou
+    /// complément, espacement et couleur des hachures.
+    fn section_ineqs(&mut self, ui: &mut Ui) {
+        let t = i18n::table(self.lang);
+        ui.horizontal(|ui| {
+            ui.strong(t.l_ineqs);
+            if ui.button(t.ajouter).clicked() && self.ineqs.len() < 10 {
+                self.ineqs.push(SystemeIneq {
+                    color: PALETTE[self.ineqs.len() % PALETTE.len()],
+                    ..Default::default()
+                });
+                self.ineq_sel = Some(self.ineqs.len() - 1);
+                self.dirty = true;
+            }
+            if ui.button(t.vider).clicked() {
+                self.ineqs.clear();
+                self.ineq_sel = None;
+                self.dirty = true;
+            }
+        });
+        if self.ineqs.is_empty() {
+            ui.label(RichText::new(t.aucune).weak().small());
+            return;
+        }
+        let mut systeme_efface: Option<usize> = None;
+        for (k, sys) in self.ineqs.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                let sel = self.ineq_sel == Some(k);
+                let [r, g, b] = sys.color;
+                if ui
+                    .add(
+                        egui::Label::new(
+                            RichText::new(if sel { "▣" } else { "▢" })
+                                .color(Color32::from_rgb(r, g, b))
+                                .size(14.0),
+                        )
+                        .sense(Sense::click()),
+                    )
+                    .clicked()
+                {
+                    self.ineq_sel = Some(k);
+                }
+                ui.label(
+                    RichText::new(format!("S{}", k + 1))
+                        .color(Color32::from_rgb(r, g, b))
+                        .small(),
+                );
+                ui.label(RichText::new(format!("{}", sys.ineqs.len())).small().weak());
+                if ui.small_button("🗑").clicked() {
+                    systeme_efface = Some(k);
+                }
+            });
+        }
+        if let Some(k) = systeme_efface {
+            self.ineqs.remove(k);
+            self.ineq_sel = None;
+            self.dirty = true;
+        }
+        let Some(sel) = self.ineq_sel else { return };
+        let Some(sys) = self.ineqs.get_mut(sel) else {
+            self.ineq_sel = None;
+            return;
+        };
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui.button(t.ajouter).clicked() && sys.ineqs.len() < 10 {
+                sys.ineqs.push(crate::ineq::Inequation {
+                    a: 1.0,
+                    b: 1.0,
+                    c: 0.0,
+                    nature: crate::ineq::Nature::SupEq,
+                });
+                self.dirty = true;
+            }
+            if ui.button(t.vider).clicked() {
+                sys.ineqs.clear();
+                self.dirty = true;
+            }
+            if ui
+                .checkbox(&mut sys.hachure_solution, t.hachure_solution)
+                .changed()
+            {
+                self.dirty = true;
+            }
+        });
+        let mut efface: Option<usize> = None;
+        for (i, inq) in sys.ineqs.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("{:>2}", i + 1));
+                if ui.add(DragValue::new(&mut inq.a).speed(0.1)).changed() {
+                    self.dirty = true;
+                }
+                ui.label("x");
+                if ui.add(DragValue::new(&mut inq.b).speed(0.1)).changed() {
+                    self.dirty = true;
+                }
+                ui.label("y");
+                if ui.add(DragValue::new(&mut inq.c).speed(0.1)).changed() {
+                    self.dirty = true;
+                }
+                for (nat, lab) in [
+                    (crate::ineq::Nature::Inf, "<"),
+                    (crate::ineq::Nature::Sup, ">"),
+                    (crate::ineq::Nature::InfEq, "≤"),
+                    (crate::ineq::Nature::SupEq, "≥"),
+                ] {
+                    if ui.selectable_label(inq.nature == nat, lab).clicked() && inq.nature != nat {
+                        inq.nature = nat;
+                        self.dirty = true;
+                    }
+                }
+                if ui.small_button("🗑").clicked() {
+                    efface = Some(i);
+                }
+            });
+        }
+        if let Some(i) = efface {
+            sys.ineqs.remove(i);
+            self.dirty = true;
+        }
+        ui.horizontal(|ui| {
+            ui.label(t.couleur);
+            let old = Color32::from_rgb(sys.color[0], sys.color[1], sys.color[2]);
+            let mut c = old;
+            ui.color_edit_button_srgba(&mut c);
+            if c != old {
+                sys.color = [c.r(), c.g(), c.b()];
+                self.dirty = true;
+            }
+            ui.label(t.hachures_espacement);
+            if ui
+                .add(egui::Slider::new(&mut sys.pas, 1.0..=10.0))
+                .changed()
+            {
+                self.dirty = true;
+            }
+        });
     }
 
     /// Panneau des annotations : points, tangentes, intégrales hachurées.
@@ -2161,8 +2545,9 @@ impl SqApp {
                 self.dirty = true;
             }
         });
-        // v1.5 : les autres outils du Schéma (man. p. 30-41)
-        let outils: [OutilSch; 10] = [
+        // v1.5 : les autres outils du Schéma (man. p. 30-41) ; v1.6 :
+        // les coniques et les expressions LaTeX
+        let outils: [OutilSch; 13] = [
             (t.sch_m_segment, || ShObj::Seg(Segment::default())),
             (t.sch_m_vect, || ShObj::Vec(Vecteur::default())),
             (t.sch_m_droite, || ShObj::Dro(Droite::default())),
@@ -2173,6 +2558,9 @@ impl SqApp {
             (t.sch_m_angle, || ShObj::Ang(Angle::default())),
             (t.sch_m_zone, || ShObj::Zon(Zone::default())),
             (t.sch_m_txt, || ShObj::Txt(TexteSchema::default())),
+            (t.sch_m_conique, || ShObj::Con(Conique::default())),
+            (t.sch_m_latex, || ShObj::Tex(TexSchema::default())),
+            (t.sch_m_rapporteur, || ShObj::Rap(Rapporteur::default())),
         ];
         ui.horizontal_wrapped(|ui| {
             for (lbl, mk) in outils {
@@ -2290,6 +2678,35 @@ impl SqApp {
                 ShObj::Txt(tx) => {
                     let aff: String = tx.texte.chars().take(14).collect();
                     format!("{} «{}»", t.sch_m_txt, aff)
+                }
+                ShObj::Con(c) => format!(
+                    "{} {}",
+                    t.sch_m_conique,
+                    match &c.def {
+                        ConDef::FoyerDirectrice { foyer, e, .. } => {
+                            format!("{} e={:.2}", vide(foyer), e)
+                        }
+                        ConDef::Cartesienne { a, b, c, d, e, f } => {
+                            format!("a={} b={} c={} d={} e={} f={}", a, b, c, d, e, f)
+                        }
+                    }
+                ),
+                ShObj::Rap(r) => {
+                    let g = if r.genre == GenreRap::Lycee {
+                        t.sch_rap_lycee
+                    } else {
+                        t.sch_rap_college
+                    };
+                    format!(
+                        "{} — {} ⌀{:.0} mm",
+                        t.sch_m_rapporteur,
+                        g,
+                        r.rayon.clamp(40.0, 100.0)
+                    )
+                }
+                ShObj::Tex(x) => {
+                    let aff: String = x.code.chars().take(18).collect();
+                    format!("{} «{}»", t.sch_m_latex, aff)
                 }
             };
             ui.horizontal(|ui| {
@@ -2542,6 +2959,9 @@ impl SqApp {
                     ShObj::Ang(a) => editeur_angle(ui, a, t, &mut maj),
                     ShObj::Zon(z) => editeur_zone(ui, z, t, &mut maj, &mut self.sch_ed_txt),
                     ShObj::Txt(tx) => editeur_texte(ui, tx, t, &mut maj),
+                    ShObj::Con(c) => editeur_conique(ui, c, t, &mut maj),
+                    ShObj::Tex(x) => editeur_tex(ui, x, t, &mut maj),
+                    ShObj::Rap(r) => editeur_rapporteur(ui, r, t, &mut maj),
                     ShObj::Pt(_) | ShObj::Bez(_) => {}
                 }
                 if maj {
@@ -3073,6 +3493,8 @@ impl SqApp {
                 match render::write_svg_file(
                     &self.page,
                     &data,
+                    &self.droites,
+                    &self.ineqs,
                     &self.annots,
                     &self.tableaux,
                     &self.stats,
@@ -3098,6 +3520,8 @@ impl SqApp {
                 match render::write_png_file(
                     &self.page,
                     &data,
+                    &self.droites,
+                    &self.ineqs,
                     &self.annots,
                     &self.tableaux,
                     &self.stats,
@@ -3122,6 +3546,8 @@ impl SqApp {
                 match render::write_bmp_file(
                     &self.page,
                     &data,
+                    &self.droites,
+                    &self.ineqs,
                     &self.annots,
                     &self.tableaux,
                     &self.stats,
@@ -3146,6 +3572,8 @@ impl SqApp {
                 match render::write_gif_file(
                     &self.page,
                     &data,
+                    &self.droites,
+                    &self.ineqs,
                     &self.annots,
                     &self.tableaux,
                     &self.stats,
@@ -3170,6 +3598,8 @@ impl SqApp {
                 match render::write_eps_file(
                     &self.page,
                     &data,
+                    &self.droites,
+                    &self.ineqs,
                     &self.annots,
                     &self.tableaux,
                     &self.stats,
@@ -3195,6 +3625,8 @@ impl SqApp {
                 match pdf::write_pdf_file(
                     &self.page,
                     &data,
+                    &self.droites,
+                    &self.ineqs,
                     &self.annots,
                     &self.tableaux,
                     &self.stats,
@@ -3290,8 +3722,11 @@ impl SqApp {
 
         self.dessine_grille(&painter, page_rect, ppm);
         self.dessine_axes(&painter, page_rect, ppm);
+        self.dessine_ineqs(&painter, page_rect, ppm);
         self.dessine_courbes(&painter, page_rect, ppm);
+        self.dessine_droites(&painter, page_rect, ppm);
         self.dessine_annots(&painter, page_rect, ppm);
+        self.dessine_schema(&painter, page_rect, ppm);
         self.dessine_tableaux(&painter, page_rect, ppm);
         self.dessine_stats(&painter, page_rect, ppm);
 
@@ -3819,213 +4254,222 @@ impl SqApp {
         }
     }
 
-    /// Dessine les séries statistiques (aperçu GUI, miroir de
-    /// `render::draw_stats_raster`).
-    fn dessine_stats(&self, painter: &egui::Painter, page_rect: Rect, ppm: f32) {
+    /// Rendu des pièces de dessin (mm page, Y vers le bas) partagé
+    /// par les séries statistiques, les arbres, les simulations… et
+    /// le schéma géométrique (v1.3-1.6) dans l'aperçu.
+    fn dessine_pieces(
+        &self,
+        painter: &egui::Painter,
+        page_rect: Rect,
+        ppm: f32,
+        pieces: &[PieceStats],
+    ) {
         let px = |x: f64, y: f64| {
             Pos2::new(
                 page_rect.left() + x as f32 * ppm,
                 page_rect.top() + y as f32 * ppm,
             )
         };
-        let dessiner = |pieces: &[PieceStats]| {
-            for piece in pieces {
-                match piece {
-                    PieceStats::Fond { mm, w, h } => {
-                        painter.rect_filled(
-                            Rect::from_min_size(
-                                px(mm.0, mm.1),
-                                Vec2::new(*w as f32 * ppm, *h as f32 * ppm),
-                            ),
-                            0.0,
-                            Color32::WHITE,
-                        );
-                    }
-                    PieceStats::Rect {
-                        mm,
-                        w,
-                        h,
-                        fill,
-                        stroke,
-                    } => {
-                        let r_ = Rect::from_min_size(
+        for piece in pieces {
+            match piece {
+                PieceStats::Fond { mm, w, h } => {
+                    painter.rect_filled(
+                        Rect::from_min_size(
                             px(mm.0, mm.1),
                             Vec2::new(*w as f32 * ppm, *h as f32 * ppm),
-                        );
-                        if let Some(c) = fill {
-                            painter.rect_filled(r_, 0.0, Color32::from_rgb(c[0], c[1], c[2]));
-                        }
-                        let (stc, stw) = stroke;
-                        painter.rect_stroke(
-                            r_,
-                            0.0,
-                            Stroke::new(
-                                (*stw as f32 * ppm).clamp(0.7, 4.0),
-                                Color32::from_rgb(stc[0], stc[1], stc[2]),
-                            ),
-                        );
+                        ),
+                        0.0,
+                        Color32::WHITE,
+                    );
+                }
+                PieceStats::Rect {
+                    mm,
+                    w,
+                    h,
+                    fill,
+                    stroke,
+                } => {
+                    let r_ = Rect::from_min_size(
+                        px(mm.0, mm.1),
+                        Vec2::new(*w as f32 * ppm, *h as f32 * ppm),
+                    );
+                    if let Some(c) = fill {
+                        painter.rect_filled(r_, 0.0, Color32::from_rgb(c[0], c[1], c[2]));
                     }
-                    PieceStats::Poly { pts, fill, stroke } => {
-                        let pl: Vec<Pos2> = pts.iter().map(|(x, y)| px(*x, *y)).collect();
-                        if let Some(c) = fill {
-                            painter.add(egui::Shape::convex_polygon(
-                                pl.clone(),
-                                Color32::from_rgb(c[0], c[1], c[2]),
-                                Stroke::NONE,
-                            ));
-                        }
-                        if let Some((c, w)) = stroke {
-                            let mut pl2 = pl;
-                            if let Some(first) = pl2.first().copied() {
-                                pl2.push(first);
-                            }
-                            painter.add(egui::Shape::line(
-                                pl2,
-                                Stroke::new(
-                                    (*w as f32 * ppm).clamp(0.7, 4.0),
-                                    Color32::from_rgb(c[0], c[1], c[2]),
-                                ),
-                            ));
-                        }
+                    let (stc, stw) = stroke;
+                    painter.rect_stroke(
+                        r_,
+                        0.0,
+                        Stroke::new(
+                            (*stw as f32 * ppm).clamp(0.7, 4.0),
+                            Color32::from_rgb(stc[0], stc[1], stc[2]),
+                        ),
+                    );
+                }
+                PieceStats::Poly { pts, fill, stroke } => {
+                    let pl: Vec<Pos2> = pts.iter().map(|(x, y)| px(*x, *y)).collect();
+                    if let Some(c) = fill {
+                        painter.add(egui::Shape::convex_polygon(
+                            pl.clone(),
+                            Color32::from_rgb(c[0], c[1], c[2]),
+                            Stroke::NONE,
+                        ));
                     }
-                    PieceStats::Ligne {
-                        x0,
-                        y0,
-                        x1,
-                        y1,
-                        c,
-                        w,
-                    } => {
-                        painter.line_segment(
-                            [px(*x0, *y0), px(*x1, *y1)],
-                            Stroke::new(
-                                (*w as f32 * ppm).clamp(0.7, 8.0),
-                                Color32::from_rgb(c[0], c[1], c[2]),
-                            ),
-                        );
-                    }
-                    PieceStats::Pointille {
-                        x0,
-                        y0,
-                        x1,
-                        y1,
-                        c,
-                        w,
-                    } => {
-                        for sh in egui::Shape::dashed_line(
-                            &[px(*x0, *y0), px(*x1, *y1)],
+                    if let Some((c, w)) = stroke {
+                        let mut pl2 = pl;
+                        if let Some(first) = pl2.first().copied() {
+                            pl2.push(first);
+                        }
+                        painter.add(egui::Shape::line(
+                            pl2,
                             Stroke::new(
                                 (*w as f32 * ppm).clamp(0.7, 4.0),
                                 Color32::from_rgb(c[0], c[1], c[2]),
                             ),
-                            4.0,
-                            3.0,
-                        ) {
-                            painter.add(sh);
-                        }
+                        ));
                     }
-                    PieceStats::Disque {
-                        c: centre,
-                        r: ray,
-                        fill,
-                        stroke,
-                    } => {
-                        painter.circle_filled(
+                }
+                PieceStats::Ligne {
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    c,
+                    w,
+                } => {
+                    painter.line_segment(
+                        [px(*x0, *y0), px(*x1, *y1)],
+                        Stroke::new(
+                            (*w as f32 * ppm).clamp(0.7, 8.0),
+                            Color32::from_rgb(c[0], c[1], c[2]),
+                        ),
+                    );
+                }
+                PieceStats::Pointille {
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    c,
+                    w,
+                } => {
+                    for sh in egui::Shape::dashed_line(
+                        &[px(*x0, *y0), px(*x1, *y1)],
+                        Stroke::new(
+                            (*w as f32 * ppm).clamp(0.7, 4.0),
+                            Color32::from_rgb(c[0], c[1], c[2]),
+                        ),
+                        4.0,
+                        3.0,
+                    ) {
+                        painter.add(sh);
+                    }
+                }
+                PieceStats::Disque {
+                    c: centre,
+                    r: ray,
+                    fill,
+                    stroke,
+                } => {
+                    painter.circle_filled(
+                        px(centre.0, centre.1),
+                        (*ray as f32 * ppm).max(1.5),
+                        Color32::from_rgb(fill[0], fill[1], fill[2]),
+                    );
+                    if let Some((c, w)) = stroke {
+                        painter.circle_stroke(
                             px(centre.0, centre.1),
                             (*ray as f32 * ppm).max(1.5),
-                            Color32::from_rgb(fill[0], fill[1], fill[2]),
+                            Stroke::new(
+                                (*w as f32 * ppm).clamp(0.7, 3.0),
+                                Color32::from_rgb(c[0], c[1], c[2]),
+                            ),
                         );
-                        if let Some((c, w)) = stroke {
-                            painter.circle_stroke(
-                                px(centre.0, centre.1),
-                                (*ray as f32 * ppm).max(1.5),
-                                Stroke::new(
-                                    (*w as f32 * ppm).clamp(0.7, 3.0),
-                                    Color32::from_rgb(c[0], c[1], c[2]),
-                                ),
-                            );
-                        }
                     }
-                    PieceStats::Texte {
-                        mm,
-                        txt,
-                        c,
-                        taille,
-                        ancre,
-                        vertical,
-                        gras,
-                        ..
-                    } => {
-                        let colour = Color32::from_rgb(c[0], c[1], c[2]);
-                        let font = FontId::proportional((*taille as f32 * ppm).max(3.0));
-                        let align = match (*ancre, *vertical) {
-                            ("start", false) => Align2::LEFT_CENTER,
-                            ("end", false) => Align2::RIGHT_CENTER,
-                            (_, false) => Align2::CENTER_CENTER,
-                            // vertical : chars empilés du bas vers le haut
-                            (_, true) => Align2::CENTER_CENTER,
+                }
+                PieceStats::Texte {
+                    mm,
+                    txt,
+                    c,
+                    taille,
+                    ancre,
+                    vertical,
+                    gras,
+                    ..
+                } => {
+                    let colour = Color32::from_rgb(c[0], c[1], c[2]);
+                    let font = FontId::proportional((*taille as f32 * ppm).max(3.0));
+                    let align = match (*ancre, *vertical) {
+                        ("start", false) => Align2::LEFT_CENTER,
+                        ("end", false) => Align2::RIGHT_CENTER,
+                        (_, false) => Align2::CENTER_CENTER,
+                        // vertical : chars empilés du bas vers le haut
+                        (_, true) => Align2::CENTER_CENTER,
+                    };
+                    if *vertical {
+                        let u = (*taille as f32 * ppm).max(3.0) * 1.15;
+                        let total = txt.chars().count() as f32 * u;
+                        let (ax, ay) = match *ancre {
+                            "end" => (mm.0, mm.1),
+                            "middle" => (mm.0, mm.1 + total as f64 / (2.0 * ppm as f64)),
+                            _ => (mm.0, mm.1 + total as f64 / ppm as f64),
                         };
-                        if *vertical {
-                            let u = (*taille as f32 * ppm).max(3.0) * 1.15;
-                            let total = txt.chars().count() as f32 * u;
-                            let (ax, ay) = match *ancre {
-                                "end" => (mm.0, mm.1),
-                                "middle" => (mm.0, mm.1 + total as f64 / (2.0 * ppm as f64)),
-                                _ => (mm.0, mm.1 + total as f64 / ppm as f64),
-                            };
-                            let mut ycur = ay + (total / 2.0) as f64 / ppm as f64;
-                            for ch in txt.chars() {
+                        let mut ycur = ay + (total / 2.0) as f64 / ppm as f64;
+                        for ch in txt.chars() {
+                            painter.text(
+                                px(ax, ycur),
+                                Align2::CENTER_CENTER,
+                                ch.to_string(),
+                                font.clone(),
+                                colour,
+                            );
+                            if *gras {
                                 painter.text(
-                                    px(ax, ycur),
+                                    px(ax + 0.35, ycur),
                                     Align2::CENTER_CENTER,
                                     ch.to_string(),
                                     font.clone(),
                                     colour,
                                 );
-                                if *gras {
-                                    painter.text(
-                                        px(ax + 0.35, ycur),
-                                        Align2::CENTER_CENTER,
-                                        ch.to_string(),
-                                        font.clone(),
-                                        colour,
-                                    );
-                                }
-                                ycur -= (u / ppm) as f64;
                             }
-                        } else {
-                            painter.text(px(mm.0, mm.1), align, txt, font.clone(), colour);
-                            if *gras {
-                                painter.text(px(mm.0 + 0.35, mm.1), align, txt, font, colour);
-                            }
+                            ycur -= (u / ppm) as f64;
+                        }
+                    } else {
+                        painter.text(px(mm.0, mm.1), align, txt, font.clone(), colour);
+                        if *gras {
+                            painter.text(px(mm.0 + 0.35, mm.1), align, txt, font, colour);
                         }
                     }
                 }
             }
-        };
+        }
+    }
+
+    /// Schéma géométrique (v1.3+) dans l'aperçu : pièces calculées
+    /// par ShObj::draw_schema (zones d'abord, objets, textes en haut).
+    fn dessine_schema(&self, painter: &egui::Painter, page_rect: Rect, ppm: f32) {
+        let pieces = ShObj::draw_schema(&self.page, &self.schema);
+        self.dessine_pieces(painter, page_rect, ppm, &pieces);
+    }
+
+    fn dessine_stats(&self, painter: &egui::Painter, page_rect: Rect, ppm: f32) {
         for s in &self.stats {
-            let pieces = s.draw_list(&self.page);
-            dessiner(&pieces);
+            self.dessine_pieces(painter, page_rect, ppm, &s.draw_list(&self.page));
         }
         for b in &self.boites {
-            let pieces = b.draw_list(&self.page);
-            dessiner(&pieces);
+            self.dessine_pieces(painter, page_rect, ppm, &b.draw_list(&self.page));
         }
         for s in &self.suites {
-            let pieces = s.draw_list(&self.page);
-            dessiner(&pieces);
+            self.dessine_pieces(painter, page_rect, ppm, &s.draw_list(&self.page));
         }
         for s2 in &self.serie2 {
-            let pieces = s2.draw_list(&self.page);
-            dessiner(&pieces);
+            self.dessine_pieces(painter, page_rect, ppm, &s2.draw_list(&self.page));
         }
         for a in &self.arbres {
-            let pieces = a.draw_list(&self.page);
-            dessiner(&pieces);
+            self.dessine_pieces(painter, page_rect, ppm, &a.draw_list(&self.page));
         }
         for sm in &self.simus {
-            let pieces = sm.draw_list(&self.page);
-            dessiner(&pieces);
+            self.dessine_pieces(painter, page_rect, ppm, &sm.draw_list(&self.page));
         }
     }
 
@@ -4387,6 +4831,49 @@ impl SqApp {
         }
     }
 
+    /// Systèmes d'inéquations (man. p. 80-81) dans l'aperçu :
+    /// hachures 45° puis frontières.
+    fn dessine_ineqs(&self, painter: &egui::Painter, page_rect: Rect, ppm: f32) {
+        for s in &self.ineqs {
+            if !s.visible {
+                continue;
+            }
+            let color = Color32::from_rgb(s.color[0], s.color[1], s.color[2]);
+            let stroke = Stroke::new((crate::ineq::TRAIT_MM as f32 * 0.8).max(0.35), color);
+            for ((x0, y0), (x1, y1)) in crate::ineq::hachures(&self.page, s) {
+                painter.line_segment(
+                    [
+                        Pos2::new(
+                            page_rect.min.x + x0 as f32 * ppm,
+                            page_rect.min.y + y0 as f32 * ppm,
+                        ),
+                        Pos2::new(
+                            page_rect.min.x + x1 as f32 * ppm,
+                            page_rect.min.y + y1 as f32 * ppm,
+                        ),
+                    ],
+                    stroke,
+                );
+            }
+            let stroke_b = Stroke::new((0.6 * ppm).max(1.2), color);
+            for ((x0, y0), (x1, y1)) in crate::ineq::frontieres(&self.page, s) {
+                painter.line_segment(
+                    [
+                        Pos2::new(
+                            page_rect.min.x + x0 as f32 * ppm,
+                            page_rect.min.y + y0 as f32 * ppm,
+                        ),
+                        Pos2::new(
+                            page_rect.min.x + x1 as f32 * ppm,
+                            page_rect.min.y + y1 as f32 * ppm,
+                        ),
+                    ],
+                    stroke_b,
+                );
+            }
+        }
+    }
+
     fn dessine_courbes(&self, painter: &egui::Painter, page_rect: Rect, ppm: f32) {
         for (i, curve) in self.curves.iter().enumerate() {
             if !curve.visible {
@@ -4418,6 +4905,50 @@ impl SqApp {
                 }
                 if pts.len() >= 2 {
                     painter.add(egui::Shape::line(pts, stroke));
+                }
+            }
+        }
+    }
+
+    /// Droites par équation réduite (man. p. 25) dans l'aperçu.
+    fn dessine_droites(&self, painter: &egui::Painter, page_rect: Rect, ppm: f32) {
+        let px = |x: f64, y: f64| {
+            Pos2::new(
+                page_rect.min.x + x as f32 * ppm,
+                page_rect.min.y + y as f32 * ppm,
+            )
+        };
+        for d in &self.droites {
+            let Ok(forme) = droite::analyse(&d.eq) else {
+                continue;
+            };
+            if d.visible {
+                let color = Color32::from_rgb(d.color[0], d.color[1], d.color[2]);
+                let stroke = Stroke::new((d.thickness.max(0.1) * 0.3).max(0.2).max(0.7), color);
+                for poly in droite::polys(&self.page, &forme, d.style) {
+                    for seg in poly.windows(2) {
+                        painter
+                            .line_segment([px(seg[0].0, seg[0].1), px(seg[1].0, seg[1].1)], stroke);
+                    }
+                }
+            }
+            if d.afficher_eq {
+                let Some(l) = droite::libelle(&self.page, &forme, &d.eq) else {
+                    continue;
+                };
+                let color = Color32::from_rgb(d.color[0], d.color[1], d.color[2]);
+                let taille = ((droite::TAILLE_EQ * ppm as f64) as f32).max(4.0);
+                let font = FontId::proportional(taille);
+                if l.verticale {
+                    // lecture bas → haut depuis l'ancre (comme le texte
+                    // vertical du raster) ; la rotation se fait autour
+                    // du point d'ancrage
+                    let galley = painter.layout_no_wrap(l.txt.clone(), font, color);
+                    let mut sh = egui::epaint::TextShape::new(px(l.mm.0, l.mm.1), galley, color);
+                    sh.angle = -std::f32::consts::FRAC_PI_2;
+                    painter.add(sh);
+                } else {
+                    painter.text(px(l.mm.0, l.mm.1), Align2::RIGHT_TOP, &l.txt, font, color);
                 }
             }
         }
@@ -4476,6 +5007,8 @@ impl eframe::App for SqApp {
                 arbres: self.arbres.clone(),
                 simus: self.simus.clone(),
                 schema: self.schema.clone(),
+                droites: self.droites.clone(),
+                ineqs: self.ineqs.clone(),
                 tables: self.tables.clone(),
             };
             if session::save(&s).is_ok() {
@@ -4511,6 +5044,9 @@ fn sch_objet_kind(o: &ShObj) -> u8 {
         ShObj::Zon(_) => 11,
         ShObj::Txt(_) => 12,
         ShObj::Pt(_) | ShObj::Bez(_) => 13,
+        ShObj::Con(_) => 14,
+        ShObj::Tex(_) => 15,
+        ShObj::Rap(_) => 16,
     }
 }
 
@@ -5340,5 +5876,237 @@ fn editeur_texte(ui: &mut Ui, tx: &mut TexteSchema, t: &i18n::T, maj: &mut bool)
         *maj |= ui.checkbox(&mut tx.gras, t.sch_gras).changed();
         *maj |= ui.checkbox(&mut tx.italique, t.sch_italique).changed();
         *maj |= ui.checkbox(&mut tx.vertical, t.sch_vertical).changed();
+        *maj |= ui.checkbox(&mut tx.souligne, t.sch_souligne).changed();
+    });
+    ui.horizontal(|ui| {
+        // arrière-plan (man. p. 39) : case à cocher + couleur
+        let mut on = tx.fond.is_some();
+        if ui.checkbox(&mut on, t.sch_fond).changed() {
+            tx.fond = on.then_some([250, 220, 160]);
+            *maj = true;
+        }
+        if let Some(f) = &mut tx.fond {
+            *maj |= ui.color_edit_button_srgb(f).changed();
+        }
+    });
+}
+
+/// Expression LaTeX (v1.6) : code (préfixe `4$`, \blue, \frac, \sqrt,
+/// ^ …_), position (baseline), couleur (man. p. 41-43).
+/// Rapporteur trigonométrique ou géométrique (man. p. 87-88) :
+/// genre lycée/collège, rayon 40..100 mm, graduations en degrés et
+/// radians, quadrillage intérieur, cercle trigonométrique simple,
+/// valeurs remarquables ; collège : demi-cercle ou cercle entier.
+fn editeur_rapporteur(ui: &mut Ui, r: &mut Rapporteur, t: &i18n::T, maj: &mut bool) {
+    ui.horizontal(|ui| {
+        ui.label("x :");
+        *maj |= ui.add(DragValue::new(&mut r.c[0]).speed(0.5)).changed();
+        ui.label("y :");
+        *maj |= ui.add(DragValue::new(&mut r.c[1]).speed(0.5)).changed();
+        ui.label(t.sch_rap_rayon);
+        let avant = r.rayon;
+        *maj |= ui
+            .add(egui::Slider::new(&mut r.rayon, 40.0..=100.0))
+            .changed();
+        if r.rayon != avant {
+            r.rayon = r.rayon.clamp(40.0, 100.0);
+        }
+    });
+    let lycee0 = r.genre == GenreRap::Lycee;
+    let mut genre = r.genre;
+    ui.horizontal(|ui| {
+        ui.label(t.sch_rap_genre);
+        ComboBox::from_id_salt("sch_rap_genre")
+            .selected_text(if lycee0 {
+                t.sch_rap_lycee
+            } else {
+                t.sch_rap_college
+            })
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(lycee0, t.sch_rap_lycee).clicked() && !lycee0 {
+                    genre = GenreRap::Lycee;
+                }
+                if ui.selectable_label(!lycee0, t.sch_rap_college).clicked() && lycee0 {
+                    genre = GenreRap::College;
+                }
+            });
+    });
+    if genre != r.genre {
+        r.genre = genre;
+        *maj = true;
+    }
+    // options du lycée (trigonométrique)
+    if r.genre == GenreRap::Lycee {
+        *maj |= ui.checkbox(&mut r.degres, t.sch_rap_degres).changed();
+        *maj |= ui.checkbox(&mut r.radians, t.sch_rap_radians).changed();
+        *maj |= ui
+            .checkbox(&mut r.quadrillage, t.sch_rap_quadrillage)
+            .changed();
+        *maj |= ui
+            .checkbox(&mut r.cercle_trigo, t.sch_rap_cercle_trigo)
+            .changed();
+        *maj |= ui.checkbox(&mut r.valeurs, t.sch_rap_valeurs).changed();
+    } else {
+        // options du collège (géométrique)
+        *maj |= ui.checkbox(&mut r.degres, t.sch_rap_degres).changed();
+        *maj |= ui.checkbox(&mut r.demi, t.sch_rap_demi).changed();
+    }
+    ui.horizontal(|ui| {
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut r.couleur).changed();
+    });
+}
+
+fn editeur_tex(ui: &mut Ui, x: &mut TexSchema, t: &i18n::T, maj: &mut bool) {
+    ui.horizontal(|ui| {
+        ui.label("x :");
+        *maj |= ui.add(DragValue::new(&mut x.x).speed(0.1)).changed();
+        ui.label("y :");
+        *maj |= ui.add(DragValue::new(&mut x.y).speed(0.1)).changed();
+    });
+    ui.label(t.sch_tex_aide);
+    champ_nom(ui, t.sch_tex_lbl, &mut x.code, 320.0, maj);
+    ui.horizontal(|ui| {
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut x.couleur).changed();
+    });
+}
+
+/// Conique (v1.6) : définition par foyer + directrice + excentricité,
+/// ou par l'équation cartésienne ax² + bxy + cy² + dx + ey + f = 0 ;
+/// options de traçage des éléments caractéristiques (man. p. 35-37).
+fn editeur_conique(ui: &mut Ui, c: &mut Conique, t: &i18n::T, maj: &mut bool) {
+    let mut defnum = match &c.def {
+        ConDef::FoyerDirectrice { .. } => 0,
+        ConDef::Cartesienne { .. } => 1,
+    };
+    ui.horizontal(|ui| {
+        ui.label(t.sch_def);
+        ComboBox::from_id_salt("sch_con_def")
+            .selected_text(match defnum {
+                0 => t.sch_con_geo,
+                _ => t.sch_con_cart,
+            })
+            .show_ui(ui, |ui| {
+                for (k, lbl) in [(0u8, t.sch_con_geo), (1, t.sch_con_cart)] {
+                    if ui.selectable_label(defnum == k, lbl).clicked() && k != defnum {
+                        defnum = k;
+                    }
+                }
+            });
+    });
+    match defnum {
+        0 if !matches!(c.def, ConDef::FoyerDirectrice { .. }) => {
+            c.def = ConDef::FoyerDirectrice {
+                foyer: String::new(),
+                directrice: Directrice::DeuxPoints {
+                    a: String::new(),
+                    b: String::new(),
+                },
+                e: 1.0,
+            };
+            *maj = true;
+        }
+        1 if !matches!(c.def, ConDef::Cartesienne { .. }) => {
+            c.def = ConDef::Cartesienne {
+                a: 1.0,
+                b: 0.0,
+                c: 1.0,
+                d: 0.0,
+                e: 0.0,
+                f: -4.0,
+            };
+            *maj = true;
+        }
+        _ => {}
+    }
+    match &mut c.def {
+        ConDef::FoyerDirectrice {
+            foyer,
+            directrice,
+            e,
+        } => {
+            champ_nom(ui, t.sch_con_foyer, foyer, 40.0, maj);
+            ui.horizontal(|ui| {
+                ui.label(t.sch_con_dir);
+                let mut dnum = match directrice {
+                    Directrice::Droite { .. } => 0,
+                    Directrice::DeuxPoints { .. } => 1,
+                };
+                ComboBox::from_id_salt("sch_con_dir")
+                    .selected_text(match dnum {
+                        0 => t.sch_con_dro,
+                        _ => t.sch_con_deuxpts,
+                    })
+                    .show_ui(ui, |ui| {
+                        for (k, lbl) in [(0u8, t.sch_con_dro), (1, t.sch_con_deuxpts)] {
+                            if ui.selectable_label(dnum == k, lbl).clicked() && k != dnum {
+                                dnum = k;
+                            }
+                        }
+                    });
+                match dnum {
+                    0 if !matches!(directrice, Directrice::Droite { .. }) => {
+                        *directrice = Directrice::Droite { nom: String::new() };
+                        *maj = true;
+                    }
+                    1 if !matches!(directrice, Directrice::DeuxPoints { .. }) => {
+                        *directrice = Directrice::DeuxPoints {
+                            a: String::new(),
+                            b: String::new(),
+                        };
+                        *maj = true;
+                    }
+                    _ => {}
+                }
+                match directrice {
+                    Directrice::Droite { nom } => {
+                        champ_nom(ui, " :", nom, 40.0, maj);
+                    }
+                    Directrice::DeuxPoints { a, b } => {
+                        champ_nom(ui, "(", a, 40.0, maj);
+                        champ_nom(ui, ",", b, 40.0, maj);
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(t.sch_con_exc);
+                *maj |= ui.add(DragValue::new(e).speed(0.05)).changed();
+            });
+        }
+        ConDef::Cartesienne { a, b, c, d, e, f } => {
+            egui::Grid::new("sch_con_cart")
+                .num_columns(2)
+                .spacing([8.0, 4.0])
+                .show(ui, |ui| {
+                    for (lbl, v) in [("a", a), ("b", b), ("c", c), ("d", d), ("e", e), ("f", f)] {
+                        ui.label(format!("{} :", lbl));
+                        *maj |= ui.add(DragValue::new(v).speed(0.05)).changed();
+                        ui.end_row();
+                    }
+                });
+            ui.label(RichText::new(t.sch_con_formule).weak().small());
+        }
+    }
+    ui.horizontal(|ui| {
+        ui.label(t.couleur);
+        *maj |= ui.color_edit_button_srgb(&mut c.couleur).changed();
+        ui.label(t.sch_ep);
+        *maj |= ui
+            .add(DragValue::new(&mut c.epaisseur).speed(0.1))
+            .changed();
+    });
+    ui.label(t.sch_con_opts);
+    ui.horizontal_wrapped(|ui| {
+        *maj |= ui.checkbox(&mut c.centre, t.sch_con_centre).changed();
+        *maj |= ui.checkbox(&mut c.foyers, t.sch_con_foyers).changed();
+        *maj |= ui
+            .checkbox(&mut c.directrices, t.sch_con_directrices)
+            .changed();
+        *maj |= ui.checkbox(&mut c.axes, t.sch_con_axes).changed();
+        *maj |= ui.checkbox(&mut c.sommets, t.sch_con_sommets).changed();
+        *maj |= ui
+            .checkbox(&mut c.asymptotes, t.sch_con_asymptotes)
+            .changed();
     });
 }

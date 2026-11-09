@@ -199,6 +199,17 @@ impl TableValeurs {
                     "table de valeurs : courbes polaires non gérées (comme dans l'original)".into(),
                 );
             }
+            CurveKind::Derivee { .. } | CurveKind::Primitive { .. } | CurveKind::Ppk { .. } => {
+                for x in xs {
+                    let y = crate::curve::y_nature(&c.kind, x)
+                        .ok_or_else(|| format!("table de valeurs : {x} hors du domaine"))?;
+                    out.push(Ligne {
+                        u: fmt(x),
+                        v: String::new(),
+                        w: fmt(y),
+                    });
+                }
+            }
         }
         Ok(out)
     }

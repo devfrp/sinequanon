@@ -512,6 +512,22 @@ const GLYPHES: &[(char, Glyphe)] = &[
     ('ç', [0x00, 0x00, 0x0F, 0x10, 0x10, 0x0F, 0x04]),
     // Ω (univers des possibles, arbres de probabilités)
     ('Ω', [0x0E, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x1F]),
+    // grecs (expressions LaTeX, v1.6)
+    ('α', [0x00, 0x0E, 0x11, 0x09, 0x0A, 0x0A, 0x06]),
+    ('β', [0x08, 0x0E, 0x11, 0x0E, 0x11, 0x0E, 0x08]),
+    ('γ', [0x11, 0x0A, 0x04, 0x04, 0x04, 0x08, 0x04]),
+    ('δ', [0x06, 0x09, 0x09, 0x0B, 0x09, 0x09, 0x06]),
+    ('ε', [0x0B, 0x10, 0x0E, 0x10, 0x0E, 0x10, 0x0B]),
+    ('λ', [0x02, 0x04, 0x04, 0x08, 0x08, 0x08, 0x08]),
+    ('μ', [0x11, 0x11, 0x11, 0x13, 0x15, 0x19, 0x10]),
+    ('ρ', [0x0E, 0x11, 0x11, 0x0E, 0x04, 0x04, 0x04]),
+    ('σ', [0x06, 0x09, 0x10, 0x08, 0x04, 0x09, 0x06]),
+    ('τ', [0x1F, 0x04, 0x04, 0x04, 0x04, 0x01, 0x01]),
+    ('φ', [0x04, 0x0E, 0x15, 0x15, 0x0E, 0x04, 0x04]),
+    ('Φ', [0x04, 0x0E, 0x15, 0x15, 0x15, 0x0E, 0x04]),
+    ('ω', [0x00, 0x0B, 0x15, 0x15, 0x15, 0x0B, 0x00]),
+    ('Σ', [0x1F, 0x10, 0x0E, 0x04, 0x07, 0x10, 0x1F]),
+    ('Δ', [0x04, 0x0A, 0x0B, 0x11, 0x11, 0x11, 0x1F]),
 ];
 
 /// Lettres accentuées : (caractère, base, 2 lignes d'accent au-dessus).
@@ -626,23 +642,26 @@ pub fn disque(r: &mut Raster, cx: f64, cy: f64, ray: f64, c: [u8; 4]) {
     poly(r, &pts, c);
 }
 
-/// Texte vertical (rotation +90°, bas vers le haut) pour les étiquettes
-/// des modalités d'un histogramme qualitatif.
+/// Texte vertical en rotation −90° : lu de bas en haut, hauts des
+/// glyphes à gauche (comme le SVG `rotate(-90)` et l'angle `/` du
+/// manuel ; étiquettes des modalités d'un histogramme qualitatif et
+/// textes du schéma). Le point (x, y) est la ligne de base du début
+/// du texte : le premier caractère est au ras de y, la pile monte.
 pub fn draw_text_vertical(r: &mut Raster, x: f64, y: f64, txt: &str, size_px: f64, c: [u8; 4]) {
-    // la police avance de 6 px par caractère à l'échelle 1 ; on écrit
-    // chaque colonne du glyphe tournée en ligne verticale
+    // rotation −90° exacte du dessin horizontal : l'avance du texte
+    // (+6u par caractère) devient une montée, la hauteur de casse
+    // (−7u…0 au-dessus du baseline) devient un décalage à gauche du
+    // point d'ancrage (hauts des glyphes à gauche)
     let u = echelle(size_px);
     let mut avance = 0.0;
     for ch in txt.chars() {
         if let Some(g) = glyphe(ch) {
-            for (bit, &ligne) in g.iter().enumerate() {
+            for (lig, &bits) in g.iter().enumerate() {
                 for col in 0..5u8 {
-                    if ligne & (1 << (4 - col)) != 0 {
-                        // bas du glyphe = ligne 6, haut = ligne 0 ;
-                        // colonne 4 (droite) devient le haut de la lettre
+                    if bits & (1 << (4 - col)) != 0 {
                         r.rect(
-                            x + (6 - bit) as f64 * u - 1.0,
-                            y - avance - (4 - col) as f64 * u,
+                            x - (7.0 - lig as f64) * u,
+                            y - avance - (col as f64 + 1.0) * u,
                             u,
                             u,
                             c,

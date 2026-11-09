@@ -2,7 +2,9 @@
 
 use crate::annot::AnnotDraw;
 use crate::curve::Curve;
+use crate::droite::{self, DroiteEq};
 use crate::grid::{Page, PAS_MM};
+use crate::ineq::{self, SystemeIneq};
 use crate::png::{self, Raster};
 use crate::schema::ShObj;
 use crate::simu::Simulation;
@@ -141,6 +143,8 @@ fn svg_tableau(s: &mut String, t: &Tableau) {
 pub fn svg(
     page: &Page,
     curves: &[CurvePolys],
+    droites: &[DroiteEq],
+    ineqs: &[SystemeIneq],
     annots: &[AnnotDraw],
     tableaux: &[Tableau],
     stats: &[Serie1],
@@ -388,6 +392,12 @@ pub fn svg(
             ));
         }
     }
+    // droites par équation réduite (man. p. 25), même niveau que les
+    // courbes : sous les annotations et les modules statistiques
+    svg_droites(&mut s, page, droites);
+    // inéquations : hachures sous la grille de modules, frontières
+    // par-dessus (man. p. 80)
+    svg_ineqs(&mut s, page, ineqs);
     // annotations : aires hachurées d'abord (sous les labels), puis
     // tangentes et points par-dessus
     for a in annots {
@@ -630,11 +640,105 @@ fn svg_stats_pieces(s: &mut String, pieces: &[PieceStats]) {
     }
 }
 
+/// SVG des systèmes d'inéquations (man. p. 80-81) : hachures 45° sur
+/// la zone solution ou son complément (défaut, conseil du manuel),
+/// puis frontières ax+by+c = 0.
+fn svg_ineqs(s: &mut String, page: &Page, ineqs: &[SystemeIneq]) {
+    for sys in ineqs {
+        if !sys.visible {
+            continue;
+        }
+        let couleur = hex(sys.color);
+        let ep = ineq::TRAIT_MM.max(0.18);
+        for ((x0, y0), (x1, y1)) in ineq::hachures(page, sys) {
+            s.push_str(&format!(
+                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{couleur}\" stroke-width=\"{ep:.2}\"/>\n",
+                f(x0),
+                f(y0),
+                f(x1),
+                f(y1)
+            ));
+        }
+        let epb = 0.6;
+        for ((x0, y0), (x1, y1)) in ineq::frontieres(page, sys) {
+            s.push_str(&format!(
+                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{couleur}\" stroke-width=\"{epb}\" stroke-linecap=\"round\"/>\n",
+                f(x0),
+                f(y0),
+                f(x1),
+                f(y1)
+            ));
+        }
+    }
+}
+
+/// SVG des droites par équation réduite (man. p. 25) : segment clippé
+/// au rectangle de la page, découpé suivant le style, puis étiquette
+/// de l'équation aux mêmes conventions que le texte du schéma.
+fn svg_droites(s: &mut String, page: &Page, droites: &[DroiteEq]) {
+    for d in droites {
+        let Ok(forme) = droite::analyse(&d.eq) else {
+            continue;
+        };
+        if d.visible {
+            let stroke = hex(d.color);
+            let width = (d.thickness as f64 * 0.3).max(0.2);
+            for poly in droite::polys(page, &forme, d.style) {
+                if poly.len() < 2 {
+                    continue;
+                }
+                let mut dpath = String::with_capacity(poly.len() * 16);
+                for (i, (x, y)) in poly.iter().enumerate() {
+                    dpath.push_str(if i == 0 { "M" } else { "L" });
+                    dpath.push_str(&format!("{} {} ", f(*x), f(*y)));
+                }
+                s.push_str(&format!(
+                    "<path d=\"{dpath}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"{width}\" stroke-linecap=\"round\"/>\n"
+                ));
+            }
+        }
+        if !d.afficher_eq {
+            continue;
+        }
+        let Some(l) = droite::libelle(page, &forme, &d.eq) else {
+            continue;
+        };
+        let fill = hex(d.color);
+        let fam = "DejaVu Sans, sans-serif";
+        if l.verticale {
+            s.push_str(&format!(
+                "<text x=\"{}\" y=\"{}\" font-size=\"{}\" font-family=\"{fam}\" fill=\"{fill}\" text-anchor=\"{}\" transform=\"rotate(-90 {} {})\">{}</text>\n",
+                f(l.mm.0),
+                f(l.mm.1),
+                fmt_num(droite::TAILLE_EQ),
+                l.ancre,
+                f(l.mm.0),
+                f(l.mm.1),
+                xml_escape(&l.txt)
+            ));
+        } else {
+            // ligne de base = ancre + 0,72 casse (comme la conversion du
+            // texte bitmap du raster)
+            let y_base = l.mm.1 + 0.72 * droite::TAILLE_EQ;
+            s.push_str(&format!(
+                "<text x=\"{}\" y=\"{}\" font-size=\"{}\" font-family=\"{fam}\" fill=\"{fill}\" text-anchor=\"{}\">{}</text>\n",
+                f(l.mm.0),
+                f(y_base),
+                fmt_num(droite::TAILLE_EQ),
+                l.ancre,
+                xml_escape(&l.txt)
+            ));
+        }
+    }
+}
+
 /// Écrit la page en SVG. Renvoie la taille du fichier.
 #[allow(clippy::too_many_arguments)]
 pub fn write_svg_file(
     page: &Page,
     curves: &[CurvePolys],
+    droites: &[DroiteEq],
+    ineqs: &[SystemeIneq],
     annots: &[AnnotDraw],
     tableaux: &[Tableau],
     stats: &[Serie1],
@@ -649,8 +753,8 @@ pub fn write_svg_file(
     path: &Path,
 ) -> std::io::Result<usize> {
     let s = svg(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
-        tables, schema,
+        page, curves, droites, ineqs, annots, tableaux, stats, boites, suites, serie2, arbres,
+        simus, courbes, tables, schema,
     );
     std::fs::write(path, s.as_bytes())?;
     Ok(s.len())
@@ -763,6 +867,70 @@ fn raster_disc(r: &mut Raster, cx: f64, cy: f64, radius: f64, c: [u8; 4]) {
 /// Dessine les annotations dans un raster. Les libellés texte ne sont
 /// restitués qu'en SVG (pas de police dans le raster) ; marqueurs et
 /// hachures y sont fidèles.
+/// Systèmes d'inéquations : mêmes traits que le SVG (hachures puis
+/// frontières).
+fn draw_ineqs_raster(r: &mut Raster, page: &Page, ineqs: &[SystemeIneq], ppm: f64) {
+    for sys in ineqs {
+        if !sys.visible {
+            continue;
+        }
+        let c4 = [sys.color[0], sys.color[1], sys.color[2], 255];
+        let th = (ineq::TRAIT_MM * ppm).clamp(0.8, 3.0);
+        for ((x0, y0), (x1, y1)) in ineq::hachures(page, sys) {
+            r.line(x0 * ppm, y0 * ppm, x1 * ppm, y1 * ppm, c4, th);
+        }
+        let thb = (0.6 * ppm).clamp(1.0, 6.0);
+        for ((x0, y0), (x1, y1)) in ineq::frontieres(page, sys) {
+            r.line(x0 * ppm, y0 * ppm, x1 * ppm, y1 * ppm, c4, thb);
+        }
+    }
+}
+
+/// Droites par équation réduite : segments puis étiquettes (les mêmes
+/// conventions bitmap que le texte du schéma).
+fn draw_droites_raster(r: &mut Raster, page: &Page, droites: &[DroiteEq], ppm: f64) {
+    for d in droites {
+        let Ok(forme) = droite::analyse(&d.eq) else {
+            continue;
+        };
+        if d.visible {
+            let c4 = [d.color[0], d.color[1], d.color[2], 255];
+            let th = (d.thickness as f64 * ppm * 0.3).clamp(1.0, 20.0);
+            for poly in droite::polys(page, &forme, d.style) {
+                for seg in poly.windows(2) {
+                    r.line(
+                        seg[0].0 * ppm,
+                        seg[0].1 * ppm,
+                        seg[1].0 * ppm,
+                        seg[1].1 * ppm,
+                        c4,
+                        th,
+                    );
+                }
+            }
+        }
+        if !d.afficher_eq {
+            continue;
+        }
+        let Some(l) = droite::libelle(page, &forme, &d.eq) else {
+            continue;
+        };
+        let c4 = [d.color[0], d.color[1], d.color[2], 255];
+        let size_px = droite::TAILLE_EQ * ppm;
+        let txt = &l.txt;
+        if l.verticale {
+            // ancre « start » : la pile de glyphes monte depuis (x, y)
+            png::draw_text_vertical(r, l.mm.0 * ppm, l.mm.1 * ppm, txt, size_px, c4);
+        } else {
+            // ancre « end » : alignée à droite de mm.0 ; ligne de base
+            // décalée de 0,72 casse comme le texte des pièces
+            let x = l.mm.0 * ppm - png::texte_largeur_px(txt, size_px);
+            let y = (l.mm.1 + 0.72 * droite::TAILLE_EQ) * ppm;
+            r.draw_text(x, y, txt, size_px, c4, false);
+        }
+    }
+}
+
 fn draw_annots_raster(r: &mut Raster, annots: &[AnnotDraw], ppm: f64) {
     // aires hachurées d'abord
     for a in annots {
@@ -908,6 +1076,8 @@ fn draw_tableau_raster(r: &mut Raster, t: &Tableau, ppm: f64) {
 pub fn rasterize_page(
     page: &Page,
     curves: &[CurvePolys],
+    droites: &[DroiteEq],
+    ineqs: &[SystemeIneq],
     annots: &[AnnotDraw],
     tableaux: &[Tableau],
     stats: &[Serie1],
@@ -952,6 +1122,8 @@ pub fn rasterize_page(
             }
         }
     }
+    draw_droites_raster(&mut r, page, droites, ppm);
+    draw_ineqs_raster(&mut r, page, ineqs, ppm);
     draw_annots_raster(&mut r, annots, ppm);
     for t in tableaux {
         draw_tableau_raster(&mut r, t, ppm);
@@ -988,6 +1160,8 @@ pub fn rasterize_page(
 pub fn write_png_file(
     page: &Page,
     curves: &[CurvePolys],
+    droites: &[DroiteEq],
+    ineqs: &[SystemeIneq],
     annots: &[AnnotDraw],
     tableaux: &[Tableau],
     stats: &[Serie1],
@@ -1003,8 +1177,8 @@ pub fn write_png_file(
     path: &Path,
 ) -> std::io::Result<()> {
     rasterize_page(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
-        tables, schema, px_per_mm,
+        page, curves, droites, ineqs, annots, tableaux, stats, boites, suites, serie2, arbres,
+        simus, courbes, tables, schema, px_per_mm,
     )
     .write_png(path)
 }
@@ -1014,6 +1188,8 @@ pub fn write_png_file(
 pub fn write_bmp_file(
     page: &Page,
     curves: &[CurvePolys],
+    droites: &[DroiteEq],
+    ineqs: &[SystemeIneq],
     annots: &[AnnotDraw],
     tableaux: &[Tableau],
     stats: &[Serie1],
@@ -1029,8 +1205,8 @@ pub fn write_bmp_file(
     path: &Path,
 ) -> std::io::Result<()> {
     rasterize_page(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
-        tables, schema, px_per_mm,
+        page, curves, droites, ineqs, annots, tableaux, stats, boites, suites, serie2, arbres,
+        simus, courbes, tables, schema, px_per_mm,
     )
     .write_bmp(path)
 }
@@ -1040,6 +1216,8 @@ pub fn write_bmp_file(
 pub fn write_gif_file(
     page: &Page,
     curves: &[CurvePolys],
+    droites: &[DroiteEq],
+    ineqs: &[SystemeIneq],
     annots: &[AnnotDraw],
     tableaux: &[Tableau],
     stats: &[Serie1],
@@ -1055,8 +1233,8 @@ pub fn write_gif_file(
     path: &Path,
 ) -> std::io::Result<()> {
     rasterize_page(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
-        tables, schema, px_per_mm,
+        page, curves, droites, ineqs, annots, tableaux, stats, boites, suites, serie2, arbres,
+        simus, courbes, tables, schema, px_per_mm,
     )
     .write_gif(path)
 }
@@ -1067,6 +1245,8 @@ pub fn write_gif_file(
 pub fn write_eps_file(
     page: &Page,
     curves: &[CurvePolys],
+    droites: &[DroiteEq],
+    ineqs: &[SystemeIneq],
     annots: &[AnnotDraw],
     tableaux: &[Tableau],
     stats: &[Serie1],
@@ -1083,8 +1263,8 @@ pub fn write_eps_file(
 ) -> std::io::Result<()> {
     use std::fmt::Write as _;
     let r = rasterize_page(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
-        tables, schema, px_per_mm,
+        page, curves, droites, ineqs, annots, tableaux, stats, boites, suites, serie2, arbres,
+        simus, courbes, tables, schema, px_per_mm,
     );
     let (w, h) = (r.w, r.h);
     // la zone englobante est en points PostScript (72 pt = 1 pouce) ;
@@ -1353,6 +1533,8 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
+            &[],
         );
         assert!(s.contains("viewBox=\"0 0 170.00 120.00\""), "{s}");
         assert!(s.contains("clipPath"));
@@ -1372,6 +1554,8 @@ mod tests {
         let s = svg(
             &p,
             &[(c, polys)],
+            &[],
+            &[],
             &[],
             &[],
             &[],
@@ -1409,6 +1593,8 @@ mod tests {
         let s = svg(
             &p,
             &[(c, polys)],
+            &[],
+            &[],
             &annots,
             &[],
             &[],
@@ -1442,6 +1628,8 @@ mod tests {
         let s = svg(
             &p,
             &[(c, polys)],
+            &[],
+            &[],
             &annots,
             &[],
             &[],
@@ -1470,6 +1658,8 @@ mod tests {
         write_png_file(
             &p,
             &[(c, polys)],
+            &[],
+            &[],
             &[],
             &[],
             &[],
@@ -1516,6 +1706,8 @@ mod tests {
         write_png_file(
             &p,
             &[(c, polys)],
+            &[],
+            &[],
             &annots,
             &[],
             &[],
@@ -1588,6 +1780,8 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
+            &[],
             &schema,
         );
         // croix des 4 points + nom italique
@@ -1632,6 +1826,8 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
+            &[],
         );
         assert!(!s.contains("#0000cc"));
         let _ = CurveKind::Fonction {
@@ -1648,6 +1844,8 @@ mod tests {
         t.y_mm = 12.0;
         let s = svg(
             &p,
+            &[],
+            &[],
             &[],
             &[],
             &[t.clone()],
@@ -1679,6 +1877,8 @@ mod tests {
         let path = dir.join("sqn_test_tableau.png");
         write_png_file(
             &p,
+            &[],
+            &[],
             &[],
             &[],
             &[t],
@@ -1728,6 +1928,8 @@ mod tests {
                 &p,
                 &[],
                 &[],
+                &[],
+                &[],
                 &[t],
                 &[],
                 &[],
@@ -1761,6 +1963,8 @@ mod tests {
             t.y_mm = 5.0;
             write_png_file(
                 &p2,
+                &[],
+                &[],
                 &[],
                 &[],
                 &[t],

@@ -158,6 +158,10 @@ pub fn point_value(curves: &[Curve], p: &PointAnnot) -> Option<(f64, f64)> {
             let rad = ar.eval(&vars, &mut unk);
             (rad * p.x.cos(), rad * p.x.sin())
         }
+        CurveKind::Derivee { .. } | CurveKind::Primitive { .. } | CurveKind::Ppk { .. } => {
+            let y = crate::curve::y_nature(&c.kind, p.x)?;
+            (p.x, y)
+        }
     };
     (ux.is_finite() && uy.is_finite()).then_some((ux, uy))
 }

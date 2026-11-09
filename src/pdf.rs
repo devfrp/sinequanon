@@ -12,7 +12,9 @@
 use crate::{
     annot::AnnotDraw,
     curve::Curve,
+    droite::DroiteEq,
     grid::Page,
+    ineq::SystemeIneq,
     png,
     render::{rasterize_page, CurvePolys},
     schema::ShObj,
@@ -41,6 +43,8 @@ fn a4(portrait: bool) -> (f64, f64) {
 pub fn write_pdf_file(
     page: &Page,
     curves: &[CurvePolys],
+    droites: &[DroiteEq],
+    ineqs: &[SystemeIneq],
     annots: &[AnnotDraw],
     tableaux: &[Tableau],
     stats: &[Serie1],
@@ -60,8 +64,8 @@ pub fn write_pdf_file(
 ) -> std::io::Result<()> {
     use std::fmt::Write as _;
     let r = rasterize_page(
-        page, curves, annots, tableaux, stats, boites, suites, serie2, arbres, simus, courbes,
-        tables, schema, px_per_mm,
+        page, curves, droites, ineqs, annots, tableaux, stats, boites, suites, serie2, arbres,
+        simus, courbes, tables, schema, px_per_mm,
     );
     let (w, h) = (r.w, r.h);
     // pixels RGBA → RGB (rangées de haut en bas, comme un objet image)
@@ -168,6 +172,8 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
+            &[],
             3.0,
             15.0,
             15.0,
@@ -216,6 +222,8 @@ mod tests {
         write_pdf_file(
             &p,
             &[(c, polys)],
+            &[],
+            &[],
             &[],
             &[],
             &[],

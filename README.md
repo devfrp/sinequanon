@@ -304,6 +304,27 @@ viendront en v1.6).
 | Corrections | remplissage raster des polygones ouverts (l'arête de fermeture manquait depuis la v0.4, mise en évidence par les zones) ; PDF, SVG, PNG, BMP, GIF et EPS prennent le schéma en compte |
 
 
+## État v1.6 — Coniques, textes mathématiques, inéquations, rapporteur
+
+La quatrième famille de courbes (man. p. 19-24) et les derniers objets du
+Schéma (coniques p. 35-37, inéquations p. 80, rapporteur p. 87-88) sont
+portés, avec une correction d'aperçu qui date de la v1.3.
+
+| Inclus | Détail |
+|---|---|
+| Texte mathématique | expressions LaTeX posées en (x ; y) : \frac{…}{…}, \sqrt{…}, indices et exposants, \pi et lettres grecques (α β γ δ ε λ μ ρ σ τ φ Φ ω Σ Δ), couleurs \blue \red \green \black ; rendu dans tous les exports |
+| Conique | définition par foyer + directrice + excentricité (e < 1 → ellipse, e = 1 → parabole, e > 1 → hyperbole) ou équation cartésienne ax² + bxy + cy² + dx + ey + f = 0 ; éléments caractéristiques traçables à la demande : centre, foyer(s), directrice(s), axe(s), sommet(s), asymptote(s) (man. p. 35-37) |
+| Dérivée / primitive | deux nouvelles natures de courbe : f′ par différences symétriques, primitive F par Simpson composé avec F(x₀) = y₀, pilotées par l'expression saisie in extenso (man. p. 19) |
+| Droite par équation réduite | huitième construction : y = m·x + p saisis directement ; les étiquettes des objets du Schéma sont clampées à l'intérieur de la page |
+| Courbe point par point | liste de points (x ; y ; pente optionnelle en degrés), au plus 20, lissage 0..200 ; avec pentes : arcs de Bézier (Hermite), sans : Catmull-Rom ; fermée si le dernier point = le premier ; valeurs en un point et table de valeurs compatibles (man. p. 22-24) |
+| Inéquations | système d'au plus 10 contraintes linéaires a·x + b·y + c ≥ 0 ou ≤ 0 (strict ou élargi) ; la zone solution OU son complément hachurés à 45°, pas réglable (3 mm par défaut) ; intersection calculée en coordonnées du repère (Sutherland–Hodgman sur le rectangle de la feuille) (man. p. 80) |
+| Rapporteur | centre en mm de page et rayon en mm vrais (40 à 100, indépendant du repère) ; lycée : graduations trigonométriques CCW en degrés et en radians (angles remarquables) ; collège : graduation horaire, 0 à l'ouest comme une règle, cercle entier ou demi-cercle posé sur sa corde ; quadrillage intérieur ; mode « cercle trigonométrique simple » (sans crans ni étiquettes) ; « valeurs remarquables » = rayons pointillés aux multiples de 30°/45° (approche simplifiée de l'option originale) (man. p. 87-88) |
+| Interface | 13e bouton du Schéma (Rapporteur) ; fenêtres d'édition propres aux textes mathématiques, aux coniques et au rapporteur |
+| Aperçu GUI | correction d'un écart depuis la v1.3 : le Schéma s'affiche désormais dans l'aperçu à l'écran (avant, il n'apparaissait que dans les exports) |
+| Textes verticaux | raster bitmap aligné définitivement : textes verticaux = rotation −90° (lus de bas en haut), identiques au SVG et à l'angle « / » du manuel |
+| Non porté | drag des objets du Schéma à la souris (tout objet, y compris le rapporteur, se place par coordonnées) ; les étiquettes radians aux multiples de 15° non remarquables |
+
+
 ## Feuille de route (parité option par option avec l'original 2.9.4)
 
 - ✅ v0.1 — cœur traceur : courbes, repère, grille 5 × 5 mm, SVG/PNG, session
@@ -346,10 +367,10 @@ viendront en v1.6).
   (9 prédéfinis, réguliers, parallélogramme), angles, zones, textes
   ordinaires ; zones d'abord, objets dans l'ordre de la liste, textes
   au premier plan (man. p. 40) ; correction du remplissage raster
-- ⬜ v1.6 — coniques (équations cartésiennes), textes mathématiques
-  (LaTeX), dérivée/primitive, droite d'équation réduite, courbe définie
-  point par point, inéquations (hachures), rapporteur d'angles, drag
-  des objets du Schéma à la souris
+- ✅ v1.6 — coniques, textes mathématiques (LaTeX), dérivée/primitive,
+  droite d'équation réduite, courbe définie point par point, inéquations
+  (hachures), rapporteur d'angles (le drag des objets du Schéma à la
+  souris reste non porté)
 
 ## Crédits et licence
 

@@ -8,12 +8,15 @@
 mod annot;
 mod app;
 mod curve;
+mod droite;
 mod expr;
 mod grid;
 mod i18n;
+mod ineq;
 mod integration;
 mod pdf;
 mod png;
+mod ppk;
 mod preferences;
 mod render;
 mod schema;
@@ -24,6 +27,7 @@ mod stats;
 mod tabgen;
 mod tableau;
 mod tabval;
+mod tex;
 
 use crate::render::CurvePolys;
 use annot::{IntegraleAnnot, PointAnnot, TangenteAnnot};
@@ -152,6 +156,10 @@ struct Opts {
     simus: Vec<crate::simu::Simulation>,
     /// objets du schéma (v1.3) : points nommés et Bézier
     schema: Vec<schema::ShObj>,
+    /// droites par équation réduite (v1.6)
+    droites: Vec<droite::DroiteEq>,
+    /// systèmes d'inéquations (v1.6)
+    ineqs: Vec<crate::ineq::SystemeIneq>,
     /// tables de valeurs (v1.4+) : liées aux courbes par index
     tables: Vec<tabval::TableValeurs>,
     /// courbes complètes chargées depuis la session (couleurs et
@@ -186,6 +194,8 @@ impl Default for Opts {
             arbres: Vec::new(),
             simus: Vec::new(),
             schema: Vec::new(),
+            droites: Vec::new(),
+            ineqs: Vec::new(),
             tables: Vec::new(),
             session_curves: Vec::new(),
             pdf: None,
@@ -275,6 +285,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
                 o.arbres = s.arbres;
                 o.simus = s.simus;
                 o.schema = s.schema;
+                o.droites = s.droites;
+                o.ineqs = s.ineqs;
                 o.tables = s.tables;
             }
             "--svg" => o.svg = Some(valeur(args, &mut i, a)?),
@@ -329,6 +341,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
         && o.arbres.is_empty()
         && o.simus.is_empty()
         && o.schema.is_empty()
+        && o.droites.iter().all(|d| d.eq.is_empty())
+        && o.ineqs.iter().all(|s| s.ineqs.is_empty())
     {
         return Err(
             "aucune courbe ni série statistique : utilisez -f, -p, -c ou --session (voir --aide)"
@@ -373,6 +387,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
         let n = render::write_svg_file(
             &o.page,
             &data,
+            &o.droites,
+            &o.ineqs,
             &annots,
             &[],
             &o.serie1,
@@ -392,6 +408,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
         let n = render::write_svg_file(
             &o.page,
             &data,
+            &o.droites,
+            &o.ineqs,
             &annots,
             &[],
             &o.serie1,
@@ -412,6 +430,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
         render::write_png_file(
             &o.page,
             &data,
+            &o.droites,
+            &o.ineqs,
             &annots,
             &[],
             &o.serie1,
@@ -433,6 +453,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
         render::write_bmp_file(
             &o.page,
             &data,
+            &o.droites,
+            &o.ineqs,
             &annots,
             &[],
             &o.serie1,
@@ -454,6 +476,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
         render::write_gif_file(
             &o.page,
             &data,
+            &o.droites,
+            &o.ineqs,
             &annots,
             &[],
             &o.serie1,
@@ -475,6 +499,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
         render::write_eps_file(
             &o.page,
             &data,
+            &o.droites,
+            &o.ineqs,
             &annots,
             &[],
             &o.serie1,
@@ -500,6 +526,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
         pdf::write_pdf_file(
             &o.page,
             &data,
+            &o.droites,
+            &o.ineqs,
             &annots,
             &[],
             &o.serie1,
