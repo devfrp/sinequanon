@@ -325,6 +325,23 @@ portés, avec une correction d'aperçu qui date de la v1.3.
 | Non porté | drag des objets du Schéma à la souris (tout objet, y compris le rapporteur, se place par coordonnées) ; les étiquettes radians aux multiples de 15° non remarquables |
 
 
+## État v1.7 — Famille de fonctions fp(x)
+
+La cinquième famille de courbes (man. p. 26-27) est portée : une expression
+dépendant du paramètre `p` (le nom du paramètre est obligatoirement p) dessine
+autant de courbes qu'il y a de valeurs de p.
+
+| Inclus | Détail |
+|---|---|
+| Famille fp(x) | expression en `x` et `p`, multiplication implicite acceptée (exemples du manuel : `px^2 - 3px + 5`, `p sin x`, `(p/2)x^2 + log p`) ; intervalle et pas du paramètre : [−5 ; 5] pas 1 par défaut, soit 11 courbes ; bornes permutées acceptées, 256 courbes maximum (man. p. 26) |
+| Palette | couleur différente pour chaque valeur de p, « choisie par l'ordinateur » : teintes réparties par angle d'or, S 75 %, V 85 % (approche simplifiée de l'original) |
+| Étiquettes de p | valeur de p posée sur sa courbe à une abscisse d'affichage choisie (expression en p seule, « 1 » par défaut) ; position dessus / sur la courbe / dessous ; couleur de la courbe (ou de sa teinte de palette) ; hauteur 2,6 mm ; étiquette omise si l'abscisse est hors domaine |
+| Aperçu GUI | options « progression » : dessin progressif courbe par courbe (90 ms) ou détaillé par tranches de points (25 ms), relancé à toute modification de la courbe ; les étiquettes n'apparaissent qu'à la fin ; options GUI uniquement — les exports dessinent toujours la famille complète |
+| CLI | `-F/--famille EXPR` avec `--p-min/--p-max/--p-pas`, `--fam-palette`, `--fam-valeurs`, `--fam-x`, `--fam-pos dessus|sur|dessous` |
+| Rendus | SVG, PNG, BMP, GIF, EPS et PDF (via rastérisation), couleurs par courbe et étiquettes incluses |
+| Non applicable | point du schéma / tangente / intégrale sur une famille (plusieurs y par x) ; table de valeurs (erreur explicite) |
+
+
 ## Feuille de route (parité option par option avec l'original 2.9.4)
 
 - ✅ v0.1 — cœur traceur : courbes, repère, grille 5 × 5 mm, SVG/PNG, session
@@ -371,6 +388,11 @@ portés, avec une correction d'aperçu qui date de la v1.3.
   droite d'équation réduite, courbe définie point par point, inéquations
   (hachures), rapporteur d'angles (le drag des objets du Schéma à la
   souris reste non porté)
+- ✅ v1.7 — famille de fonctions fp(x) : paramètre p ([−5 ; 5] pas 1 par
+  défaut, 256 courbes max), palette « choisie par l'ordinateur »,
+  étiquettes des valeurs de p (abscisse d'affichage, dessus/sur/dessous),
+  progression courbe par courbe dans l'aperçu GUI (les annotations
+  ponctuelles et la table de valeurs ne s'appliquent pas à une famille)
 
 ## Crédits et licence
 

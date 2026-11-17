@@ -3,7 +3,9 @@
 //! intégrales hachurées) et export SVG/PNG.
 
 use crate::annot::{self, draw_list, AnnotDraw, IntegraleAnnot, PointAnnot, TangenteAnnot};
-use crate::curve::{apply_style, eval_fonction, sample_curve, Curve, CurveKind, KindId, PALETTE};
+use crate::curve::{
+    apply_style, eval_fonction, sample_trace, Curve, CurveKind, KindId, PosP, Trace, PALETTE,
+};
 use crate::droite::{self, DroiteEq};
 use crate::grid::Page;
 use crate::i18n::{self, Lang};
@@ -32,10 +34,26 @@ use eframe::egui::{
     Stroke, TextEdit, Ui, Vec2,
 };
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Résultat d'échantillonnage d'une courbe : polylignes (mm) ou erreur.
-pub type CurveResult = Result<Vec<Vec<(f64, f64)>>, String>;
+pub type CurveResult = Result<Trace, String>;
+
+/// État de la progression d'une famille fp(x) (man. p. 26, options
+/// 1-2) : copie de la courbe au lancement (pour retrouver sa trace
+/// dans `poly`) + avancement du dessin.
+struct FamilleAnim {
+    /// courbe animée (copie au lancement)
+    curve: Curve,
+    /// nombre de courbes entièrement dessinées
+    prochain: usize,
+    /// fraction de la courbe courante dessinée (progression fine)
+    frac: f32,
+    /// progression fine (par tranches de points) ?
+    fine: bool,
+    /// instant du dernier pas (90 ms par courbe, 25 ms par tranche)
+    dernier: Instant,
+}
 
 /// Application Sine qua non (Rust).
 pub struct SqApp {
@@ -60,6 +78,8 @@ pub struct SqApp {
     pub dirty: bool,
     /// polylignes calculées (mm), alignées sur `curves`
     pub poly: Vec<CurveResult>,
+    /// progression d'une famille fp(x) en cours (man. p. 26)
+    famille_anim: Option<FamilleAnim>,
     /// annotations prêtes à dessiner (recalculées à chaque frame)
     pub annots: Vec<AnnotDraw>,
     /// tableaux de signes et de variations (v0.3+)
@@ -239,6 +259,7 @@ impl SqApp {
             status: None,
             dirty: false,
             poly: Vec::new(),
+            famille_anim: None,
             annots: Vec::new(),
             tableaux,
             stats,
@@ -299,7 +320,7 @@ impl SqApp {
     fn refresh(&mut self, cols: usize) {
         let mut poly = Vec::with_capacity(self.curves.len());
         for c in &self.curves {
-            poly.push(sample_curve(c, &self.page, cols, 4000).map(|ps| apply_style(ps, c.style)));
+            poly.push(sample_trace(c, &self.page, cols, 4000).map(|tr| apply_style(tr, c.style)));
         }
         self.poly = poly;
         self.annots = draw_list(
@@ -309,6 +330,42 @@ impl SqApp {
             &self.tangentes,
             &self.integrales,
         );
+    }
+
+    /// Lance (ou relance) la progression d'une famille fp(x) (man.
+    /// p. 26, options 1-2) : dessin progressif, une courbe toutes les
+    /// 90 ms, ou par tranches de points toutes les 25 ms en mode
+    /// détaillé. Sans effet si la courbe visée n'est pas une famille ;
+    /// coupe l'animation si c'est la courbe animée dont les deux
+    /// options viennent d'être décochées.
+    fn lance_anim_famille(&mut self, sel: usize) {
+        let Some(c) = self.curves.get(sel) else {
+            return;
+        };
+        if let CurveKind::Famille {
+            progression,
+            progression_fine,
+            ..
+        } = &c.kind
+        {
+            if *progression || *progression_fine {
+                self.famille_anim = Some(FamilleAnim {
+                    curve: c.clone(),
+                    prochain: 0,
+                    frac: 0.0,
+                    fine: *progression_fine,
+                    dernier: Instant::now(),
+                });
+                return;
+            }
+        }
+        // ni famille ni progression : couper seulement si c'est bien
+        // la courbe animée qui vient d'être modifiée
+        if let Some(a) = &self.famille_anim {
+            if *c == a.curve {
+                self.famille_anim = None;
+            }
+        }
     }
 
     /// Données prêtes pour l'export (courbes visibles + polylignes valides).
@@ -510,6 +567,8 @@ impl SqApp {
             return;
         };
 
+        // relancer la progression de la famille après modification
+        let mut relancer = false;
         // nature
         let kind_id = curve.kind.kind_id();
         ComboBox::from_label(t.nature)
@@ -520,6 +579,7 @@ impl SqApp {
                 KindId::Derivee => t.l_derivee,
                 KindId::Primitive => t.l_primitive,
                 KindId::Ppk => t.l_ppk,
+                KindId::Famille => t.l_famille,
             })
             .show_ui(ui, |ui| {
                 for (id, name) in [
@@ -529,6 +589,7 @@ impl SqApp {
                     (KindId::Derivee, t.l_derivee),
                     (KindId::Primitive, t.l_primitive),
                     (KindId::Ppk, t.l_ppk),
+                    (KindId::Famille, t.l_famille),
                 ] {
                     if ui.selectable_label(kind_id == id, name).clicked() && kind_id != id {
                         curve.kind = curve.kind.convert(id);
@@ -700,6 +761,99 @@ impl SqApp {
                     }
                 });
             }
+            CurveKind::Famille {
+                expr,
+                pmin,
+                pmax,
+                pas,
+                palette,
+                valeurs,
+                x_etiq,
+                pos,
+                progression,
+                progression_fine,
+            } => {
+                // famille fp(x) (man. p. 26-27) : expression avec le
+                // paramètre p, intervalle et pas, 4 options ; chaque
+                // modification relance la progression si demandée
+                ui.horizontal(|ui| {
+                    ui.label("fp(x) =");
+                    if ui
+                        .add(TextEdit::singleline(expr).desired_width(f32::INFINITY))
+                        .changed()
+                    {
+                        self.dirty = true;
+                        relancer = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("p de");
+                    if ui.add(DragValue::new(pmin).speed(0.1)).changed() {
+                        self.dirty = true;
+                        relancer = true;
+                    }
+                    ui.label(t.a);
+                    if ui.add(DragValue::new(pmax).speed(0.1)).changed() {
+                        self.dirty = true;
+                        relancer = true;
+                    }
+                    ui.label(t.c_fam_pas);
+                    if ui.add(DragValue::new(pas).speed(0.05)).changed() {
+                        self.dirty = true;
+                        relancer = true;
+                    }
+                });
+                if ui.checkbox(palette, t.c_fam_palette).changed() {
+                    self.dirty = true;
+                    relancer = true;
+                }
+                if ui.checkbox(valeurs, t.c_fam_valeurs).changed() {
+                    self.dirty = true;
+                    relancer = true;
+                }
+                if *valeurs {
+                    ui.horizontal(|ui| {
+                        ui.label(t.c_fam_x);
+                        if ui
+                            .add(TextEdit::singleline(x_etiq).desired_width(110.0))
+                            .changed()
+                        {
+                            self.dirty = true;
+                            relancer = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(t.c_fam_pos);
+                        ComboBox::from_id_salt("fam_pos")
+                            .selected_text(match pos {
+                                PosP::Dessus => t.c_fam_dessus,
+                                PosP::Sur => t.c_fam_sur,
+                                PosP::Dessous => t.c_fam_dessous,
+                            })
+                            .show_ui(ui, |ui| {
+                                for (p, lbl) in [
+                                    (PosP::Dessus, t.c_fam_dessus),
+                                    (PosP::Sur, t.c_fam_sur),
+                                    (PosP::Dessous, t.c_fam_dessous),
+                                ] {
+                                    if ui.selectable_label(*pos == p, lbl).clicked() && *pos != p {
+                                        *pos = p;
+                                        self.dirty = true;
+                                        relancer = true;
+                                    }
+                                }
+                            });
+                    });
+                }
+                if ui.checkbox(progression, t.c_fam_progression).changed() {
+                    self.dirty = true;
+                    relancer = true;
+                }
+                if ui.checkbox(progression_fine, t.c_fam_fine).changed() {
+                    self.dirty = true;
+                    relancer = true;
+                }
+            }
         }
 
         // style
@@ -711,6 +865,7 @@ impl SqApp {
             if c != old {
                 curve.color = [c.r(), c.g(), c.b()];
                 self.dirty = true;
+                relancer = true;
             }
             ui.label(t.epaisseur);
             if ui
@@ -718,6 +873,7 @@ impl SqApp {
                 .changed()
             {
                 self.dirty = true;
+                relancer = true;
             }
         });
         ui.horizontal(|ui| {
@@ -730,6 +886,7 @@ impl SqApp {
                 if ui.selectable_label(curve.style == st, name).clicked() && curve.style != st {
                     curve.style = st;
                     self.dirty = true;
+                    relancer = true;
                 }
             }
         });
@@ -741,6 +898,12 @@ impl SqApp {
                     .small()
                     .color(Color32::RED),
             );
+        }
+
+        // (re)lancer la progression de la famille après modification
+        // (man. p. 26 : les deux options « progression »)
+        if relancer {
+            self.lance_anim_famille(sel);
         }
     }
 
@@ -4875,17 +5038,48 @@ impl SqApp {
     }
 
     fn dessine_courbes(&self, painter: &egui::Painter, page_rect: Rect, ppm: f32) {
+        let expanded = page_rect.expand(60.0);
         for (i, curve) in self.curves.iter().enumerate() {
             if !curve.visible {
                 continue;
             }
-            let Ok(polys) = &self.poly[i] else { continue };
-            let color = Color32::from_rgb(curve.color[0], curve.color[1], curve.color[2]);
-            let stroke = Stroke::new(curve.thickness.max(0.5), color);
-            let expanded = page_rect.expand(60.0);
-            for poly in polys {
-                let mut pts: Vec<Pos2> = Vec::with_capacity(poly.len());
-                for &(mx, my) in poly {
+            let Ok(tr) = &self.poly[i] else { continue };
+            // progression d'une famille fp(x) (man. p. 26, options 1-2)
+            // : seules les courbes déjà tracées sont affichées (+ la
+            // courbe courante par tranches en progression fine) ; les
+            // étiquettes restent masquées pendant l'animation
+            let anim = self.famille_anim.as_ref().filter(|a| a.curve == *curve);
+            for (k, poly) in tr.polys.iter().enumerate() {
+                let frac = if let Some(a) = anim {
+                    if k < a.prochain {
+                        1.0
+                    } else if a.fine && k == a.prochain {
+                        a.frac
+                    } else {
+                        break;
+                    }
+                } else {
+                    1.0
+                };
+                // couleur par polyligne : palette de la famille (man.
+                // p. 26), sinon la couleur de la courbe
+                let cc = tr.couleurs.get(k).copied().unwrap_or(curve.color);
+                let stroke = Stroke::new(
+                    curve.thickness.max(0.5),
+                    Color32::from_rgb(cc[0], cc[1], cc[2]),
+                );
+                // en progression fine, la courbe en cours n'est tracée
+                // qu'à la fraction `frac` de ses points
+                let nkeep = if frac >= 1.0 {
+                    poly.len()
+                } else {
+                    (((frac as f64) * poly.len() as f64).ceil() as usize).min(poly.len())
+                };
+                if nkeep < 2 {
+                    continue;
+                }
+                let mut pts: Vec<Pos2> = Vec::with_capacity(nkeep);
+                for &(mx, my) in poly.iter().take(nkeep) {
                     let p = Pos2::new(
                         page_rect.min.x + (mx as f32) * ppm,
                         page_rect.min.y + (my as f32) * ppm,
@@ -4905,6 +5099,26 @@ impl SqApp {
                 }
                 if pts.len() >= 2 {
                     painter.add(egui::Shape::line(pts, stroke));
+                }
+            }
+            // étiquettes « valeurs de p » (man. p. 26) : ancre
+            // haut-centre, hauteur 2,6 mm comme dans les exports
+            if anim.is_none() {
+                for e in &tr.etiquettes {
+                    let pos = Pos2::new(
+                        page_rect.min.x + (e.mm.0 as f32) * ppm,
+                        page_rect.min.y + (e.mm.1 as f32) * ppm,
+                    );
+                    if !pos.x.is_finite() || !pos.y.is_finite() || !expanded.contains(pos) {
+                        continue;
+                    }
+                    painter.text(
+                        pos,
+                        Align2::CENTER_TOP,
+                        &e.txt,
+                        FontId::proportional(2.6 * ppm),
+                        Color32::from_rgb(e.couleur[0], e.couleur[1], e.couleur[2]),
+                    );
                 }
             }
         }
@@ -4955,6 +5169,12 @@ impl SqApp {
     }
 }
 
+/// Durées de la progression d'une famille fp(x) (man. p. 26) : une
+/// courbe toutes les 90 ms (« progression ») ; une tranche de points
+/// toutes les 25 ms (« progression fine »).
+const DUREE_COURBE: Duration = Duration::from_millis(90);
+const DUREE_TRANCHE: Duration = Duration::from_millis(25);
+
 const PAS_MM_F32: f32 = 5.0;
 
 fn fmt_label(v: f64) -> String {
@@ -4973,6 +5193,48 @@ impl eframe::App for SqApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let cols = (ctx.input(|i| i.screen_rect.width()) / 2.0).max(64.0) as usize;
         self.refresh(cols);
+        // progression d'une famille fp(x) (man. p. 26, options 1-2) :
+        // avancer l'animation, l'abandonner si la courbe a disparu ou
+        // quand toutes les courbes sont tracées, et redemander une
+        // frame tant qu'elle tourne
+        if let Some(anim) = &mut self.famille_anim {
+            if anim.dernier.elapsed()
+                >= if anim.fine {
+                    DUREE_TRANCHE
+                } else {
+                    DUREE_COURBE
+                }
+            {
+                anim.dernier = Instant::now();
+                if anim.fine {
+                    anim.frac += 0.08;
+                    if anim.frac >= 1.0 {
+                        anim.frac = 0.0;
+                        anim.prochain += 1;
+                    }
+                } else {
+                    anim.prochain += 1;
+                }
+            }
+        }
+        if let Some(anim) = &self.famille_anim {
+            let ncourbes = self
+                .curves
+                .iter()
+                .position(|c| *c == anim.curve)
+                .and_then(|i| self.poly.get(i))
+                .and_then(|r| r.as_ref().ok())
+                .map(|tr| tr.polys.len());
+            let finie = match ncourbes {
+                None => true,
+                Some(n) => anim.prochain >= n,
+            };
+            if finie {
+                self.famille_anim = None;
+            } else {
+                ctx.request_repaint_after(DUREE_TRANCHE);
+            }
+        }
         self.panneau_lateral(ctx);
         egui::CentralPanel::default().show(ctx, |ui| self.zone_dessin(ui));
         self.fenetre_tableau(ctx);

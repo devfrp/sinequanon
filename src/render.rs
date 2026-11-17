@@ -1,7 +1,7 @@
 //! Rendus d'export : SVG vectoriel (mm, imprimable 1:1) et PNG raster.
 
 use crate::annot::AnnotDraw;
-use crate::curve::Curve;
+use crate::curve::{Curve, Trace};
 use crate::droite::{self, DroiteEq};
 use crate::grid::{Page, PAS_MM};
 use crate::ineq::{self, SystemeIneq};
@@ -14,7 +14,7 @@ use crate::tabval::TableValeurs;
 use std::path::Path;
 
 /// Polylignes d'une courbe, en coordonnées page (mm).
-pub type CurvePolys = (Curve, Vec<Vec<(f64, f64)>>);
+pub type CurvePolys = (Curve, Trace);
 
 pub fn hex(c: [u8; 3]) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
@@ -372,16 +372,18 @@ pub fn svg(
     }
 
     // courbes
-    for (curve, polys) in curves {
+    for (curve, tr) in curves {
         if !curve.visible {
             continue;
         }
-        let stroke = hex(curve.color);
         let width = (curve.thickness as f64 * 0.3).max(0.2);
-        for poly in polys {
+        for (k, poly) in tr.polys.iter().enumerate() {
             if poly.len() < 2 {
                 continue;
             }
+            // couleur par polyligne : palette de la famille (man.
+            // p. 26), sinon la couleur de la courbe
+            let stroke = hex(tr.couleurs.get(k).copied().unwrap_or(curve.color));
             let mut d = String::with_capacity(poly.len() * 16);
             for (i, (x, y)) in poly.iter().enumerate() {
                 d.push_str(if i == 0 { "M" } else { "L" });
@@ -389,6 +391,17 @@ pub fn svg(
             }
             s.push_str(&format!(
                 "<path d=\"{d}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"{width}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n"
+            ));
+        }
+        // étiquettes « valeurs de p » posées sur les courbes de la
+        // famille (man. p. 26) : ancre centre, baseline mm.1 + 0,72·2,6
+        for e in &tr.etiquettes {
+            s.push_str(&format!(
+                "<text x=\"{}\" y=\"{}\" font-size=\"2.6\" font-family=\"DejaVu Sans, sans-serif\" fill=\"{}\" text-anchor=\"middle\">{}</text>\n",
+                f(e.mm.0),
+                f(e.mm.1 + 0.72 * 2.6),
+                hex(e.couleur),
+                xml_escape(&e.txt)
             ));
         }
     }
@@ -1103,13 +1116,14 @@ pub fn rasterize_page(
         || !arbres.is_empty()
         || !simus.is_empty();
     draw_page_raster(&mut r, page, ppm, stats_mode);
-    for (curve, polys) in curves {
+    for (curve, tr) in curves {
         if !curve.visible {
             continue;
         }
-        let c4 = [curve.color[0], curve.color[1], curve.color[2], 255];
         let th = (curve.thickness as f64 * ppm * 0.3).clamp(1.0, 20.0);
-        for poly in polys {
+        for (k, poly) in tr.polys.iter().enumerate() {
+            let cc = tr.couleurs.get(k).copied().unwrap_or(curve.color);
+            let c4 = [cc[0], cc[1], cc[2], 255];
             for seg in poly.windows(2) {
                 r.line(
                     seg[0].0 * ppm,
@@ -1120,6 +1134,21 @@ pub fn rasterize_page(
                     th,
                 );
             }
+        }
+        // étiquettes « valeurs de p » : bitmap centré (même convention
+        // que les textes statistiques)
+        for e in &tr.etiquettes {
+            let size_px = 2.6 * ppm;
+            let c4 = [e.couleur[0], e.couleur[1], e.couleur[2], 255];
+            let w = png::texte_largeur_px(&e.txt, size_px);
+            r.draw_text(
+                e.mm.0 * ppm - w / 2.0,
+                e.mm.1 * ppm + size_px * 0.72,
+                &e.txt,
+                size_px,
+                c4,
+                false,
+            );
         }
     }
     draw_droites_raster(&mut r, page, droites, ppm);
@@ -1512,7 +1541,7 @@ fn draw_stats_raster(r: &mut Raster, ppm: f64, pieces: &[PieceStats]) {
 mod tests {
     use super::*;
     use crate::annot::{draw_list, IntegraleAnnot, PointAnnot, TangenteAnnot};
-    use crate::curve::{sample_curve, Curve, CurveKind};
+    use crate::curve::{sample_curve, Curve, CurveKind, Trace};
 
     #[test]
     fn svg_contient_les_elements() {
@@ -1521,7 +1550,7 @@ mod tests {
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
         let s = svg(
             &p,
-            &[(c, polys)],
+            &[(c, Trace::simple(polys))],
             &[],
             &[],
             &[],
@@ -1553,7 +1582,7 @@ mod tests {
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
         let s = svg(
             &p,
-            &[(c, polys)],
+            &[(c, Trace::simple(polys))],
             &[],
             &[],
             &[],
@@ -1592,7 +1621,7 @@ mod tests {
         );
         let s = svg(
             &p,
-            &[(c, polys)],
+            &[(c, Trace::simple(polys))],
             &[],
             &[],
             &annots,
@@ -1627,7 +1656,7 @@ mod tests {
         );
         let s = svg(
             &p,
-            &[(c, polys)],
+            &[(c, Trace::simple(polys))],
             &[],
             &[],
             &annots,
@@ -1657,7 +1686,7 @@ mod tests {
         let path = dir.join("test.png");
         write_png_file(
             &p,
-            &[(c, polys)],
+            &[(c, Trace::simple(polys))],
             &[],
             &[],
             &[],
@@ -1705,7 +1734,7 @@ mod tests {
         let path = dir.join("test-annots.png");
         write_png_file(
             &p,
-            &[(c, polys)],
+            &[(c, Trace::simple(polys))],
             &[],
             &[],
             &annots,
@@ -1814,7 +1843,7 @@ mod tests {
         let polys = sample_curve(&c, &p, 200, 200).unwrap();
         let s = svg(
             &p,
-            &[(c.clone(), polys)],
+            &[(c.clone(), Trace::simple(polys))],
             &[],
             &[],
             &[],

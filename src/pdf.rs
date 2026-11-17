@@ -141,8 +141,7 @@ pub fn write_pdf_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve::sample_curve;
-    use crate::curve::Curve;
+    use crate::curve::{sample_curve, Curve, Trace};
 
     fn page() -> Page {
         Page::default()
@@ -221,7 +220,7 @@ mod tests {
         let tmp = tmp("a4-paysage.pdf");
         write_pdf_file(
             &p,
-            &[(c, polys)],
+            &[(c, Trace::simple(polys))],
             &[],
             &[],
             &[],

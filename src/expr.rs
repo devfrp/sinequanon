@@ -30,6 +30,8 @@ pub struct VarSet {
     pub n: Option<f64>,
     /// valeur courant de la suite (u_{n+1} = f(u_n))
     pub u: Option<f64>,
+    /// paramètre d'une famille de fonctions fp(x) (man. p. 26)
+    pub p: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -118,9 +120,19 @@ fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             }
             let text: String = chars[start..i].iter().collect();
             let lower = text.to_lowercase();
-            // « xsin(x) » → « x » puis « sin(x) » (x n'initie aucune fonction)
+            // « xsin(x) » → « x » puis « sin(x) » (x n'initie aucune fonction) ;
+            // « px^2 » → « p », « x »… sauf « pi » et « pow » (man. p. 26 :
+            // le paramètre d'une famille peut être collé aux facteurs)
             if lower.len() > 1 && lower.starts_with('x') && !lower.starts_with("x_") {
                 toks.push(Tok::Ident("x".into()));
+                i = start + 1;
+            } else if lower.len() > 1
+                && lower.starts_with('p')
+                && !lower.starts_with("pi")
+                && !lower.starts_with("pow")
+                && !lower.starts_with("p_")
+            {
+                toks.push(Tok::Ident("p".into()));
                 i = start + 1;
             } else {
                 toks.push(Tok::Ident(lower));
@@ -280,6 +292,7 @@ fn lookup(name: &str, vars: &VarSet) -> Option<f64> {
         "theta" => vars.theta,
         "n" => vars.n,
         "u" => vars.u,
+        "p" => vars.p,
         "pi" => Some(PI),
         "e" => Some(E),
         _ => None,

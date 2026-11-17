@@ -31,7 +31,7 @@ mod tex;
 
 use crate::render::CurvePolys;
 use annot::{IntegraleAnnot, PointAnnot, TangenteAnnot};
-use curve::{apply_style, Curve, CurveKind, PALETTE};
+use curve::{apply_style, Curve, CurveKind, PosP, PALETTE};
 use eframe::egui;
 use grid::Page;
 use i18n::Lang;
@@ -51,6 +51,13 @@ OPTIONS D'EXPORT
   -p, --polaire EXPR          Ajoute r(θ) = EXPR (répétable)
   -c, --param X;Y             Ajoute x = X(t), y = Y(t) (répétable)
       --t-min N --t-max N     Domaine de t/θ (défaut : -2π .. 2π)
+  -F, --famille EXPR          Ajoute la famille fp(x) = EXPR (répétable)
+      --p-min N --p-max N     Intervalle du paramètre p (défaut : -5 .. 5)
+      --p-pas N               Pas du paramètre p (défaut : 1)
+      --fam-palette           Couleur différente pour chaque valeur de p
+      --fam-valeurs           Affiche la valeur de p sur chaque courbe
+      --fam-x EXPR            Abscisse d'affichage de p (défaut : 1)
+      --fam-pos POS           Position des valeurs : dessus|sur|dessous
       --point C:x             Point sur la courbe C à l'abscisse x
       --tangente C:x          Tangente à la courbe C en x (fonctions)
       --aire C:a:b            Intégrale hachurée de C entre a et b
@@ -129,8 +136,21 @@ struct Opts {
     fonctions: Vec<String>,
     polaires: Vec<String>,
     params: Vec<(String, String)>,
+    familles: Vec<String>,
     tmin: f64,
     tmax: f64,
+    /// intervalle et pas du paramètre p des familles (man. p. 26)
+    pmin: f64,
+    pmax: f64,
+    pas: f64,
+    /// couleur différente par valeur de p (« choisie par l'ordinateur »)
+    fam_palette: bool,
+    /// étiquettes des valeurs de p sur les courbes
+    fam_valeurs: bool,
+    /// abscisse d'affichage des valeurs de p (expression en p)
+    fam_x_etiq: String,
+    /// position des étiquettes : dessus / sur la courbe / dessous
+    fam_pos: PosP,
     points: Vec<(usize, f64)>,
     tangentes: Vec<(usize, f64)>,
     aires: Vec<(usize, f64, f64)>,
@@ -175,8 +195,16 @@ impl Default for Opts {
             fonctions: Vec::new(),
             polaires: Vec::new(),
             params: Vec::new(),
+            familles: Vec::new(),
             tmin: -2.0 * std::f64::consts::PI,
             tmax: 2.0 * std::f64::consts::PI,
+            pmin: -5.0,
+            pmax: 5.0,
+            pas: 1.0,
+            fam_palette: false,
+            fam_valeurs: false,
+            fam_x_etiq: "1".into(),
+            fam_pos: PosP::default(),
             points: Vec::new(),
             tangentes: Vec::new(),
             aires: Vec::new(),
@@ -260,6 +288,21 @@ fn exporter(args: &[String]) -> Result<(), String> {
             }
             "--t-min" => o.tmin = nb(&valeur(args, &mut i, a)?, a)?,
             "--t-max" => o.tmax = nb(&valeur(args, &mut i, a)?, a)?,
+            "-F" | "--famille" => o.familles.push(valeur(args, &mut i, a)?),
+            "--p-min" => o.pmin = nb(&valeur(args, &mut i, a)?, a)?,
+            "--p-max" => o.pmax = nb(&valeur(args, &mut i, a)?, a)?,
+            "--p-pas" => o.pas = nb(&valeur(args, &mut i, a)?, a)?,
+            "--fam-palette" => o.fam_palette = true,
+            "--fam-valeurs" => o.fam_valeurs = true,
+            "--fam-x" => o.fam_x_etiq = valeur(args, &mut i, a)?,
+            "--fam-pos" => {
+                o.fam_pos = match valeur(args, &mut i, a)?.as_str() {
+                    "dessus" => PosP::Dessus,
+                    "sur" => PosP::Sur,
+                    "dessous" => PosP::Dessous,
+                    v => return Err(format!("--fam-pos attend dessus|sur|dessous, reçu « {v} »")),
+                };
+            }
             "--point" => o.points.push(courbe_x(&valeur(args, &mut i, a)?, a)?),
             "--tangente" => o.tangentes.push(courbe_x(&valeur(args, &mut i, a)?, a)?),
             "--aire" => o.aires.push(courbe_ab(&valeur(args, &mut i, a)?, a)?),
@@ -333,7 +376,27 @@ fn exporter(args: &[String]) -> Result<(), String> {
             PALETTE[(k + 2) % PALETTE.len()],
         ));
     }
+    for (k, e) in o.familles.iter().enumerate() {
+        // famille fp(x) (man. p. 26-27) ; les deux « progressions » ne
+        // concernent que l'aperçu de l'interface
+        curves.push(Curve::with_kind(
+            CurveKind::Famille {
+                expr: e.clone(),
+                pmin: o.pmin,
+                pmax: o.pmax,
+                pas: o.pas,
+                palette: o.fam_palette,
+                valeurs: o.fam_valeurs,
+                x_etiq: o.fam_x_etiq.clone(),
+                pos: o.fam_pos,
+                progression: false,
+                progression_fine: false,
+            },
+            PALETTE[(k + 3) % PALETTE.len()],
+        ));
+    }
     if curves.is_empty()
+        && o.familles.is_empty()
         && o.serie1.is_empty()
         && o.boites.is_empty()
         && o.suites.is_empty()
@@ -345,7 +408,7 @@ fn exporter(args: &[String]) -> Result<(), String> {
         && o.ineqs.iter().all(|s| s.ineqs.is_empty())
     {
         return Err(
-            "aucune courbe ni série statistique : utilisez -f, -p, -c ou --session (voir --aide)"
+            "aucune courbe ni série statistique : utilisez -f, -p, -c, -F ou --session (voir --aide)"
                 .into(),
         );
     }
@@ -360,8 +423,8 @@ fn exporter(args: &[String]) -> Result<(), String> {
         };
         let mut data = Vec::with_capacity(curves.len());
         for c in &curves {
-            let polys = curve::sample_curve(c, &o.page, n_fn, 6000)?;
-            data.push((c.clone(), apply_style(polys, c.style)));
+            let tr = curve::sample_trace(c, &o.page, n_fn, 6000)?;
+            data.push((c.clone(), apply_style(tr, c.style)));
         }
         data
     };

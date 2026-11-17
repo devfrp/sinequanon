@@ -210,6 +210,10 @@ impl TableValeurs {
                     });
                 }
             }
+            CurveKind::Famille { .. } => {
+                // plusieurs y pour un x (man. p. 26) : pas de table
+                return Err("table de valeurs : non applicable à une famille de fonctions".into());
+            }
         }
         Ok(out)
     }

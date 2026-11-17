@@ -267,6 +267,23 @@ ported, along with a preview fix that dates back to v1.3.
 | Not ported | mouse drag of Diagram objects (every object, including the protractor, is placed by coordinates); radian labels at non-notable multiples of 15° |
 
 
+## v1.7 status — Family of functions fp(x)
+
+The fifth family of curves (man. p. 26-27) is ported: an expression
+depending on the parameter `p` (the parameter name is necessarily p) draws
+as many curves as there are values of p.
+
+| Included | Details |
+|---|---|
+| Family fp(x) | expression in `x` and `p`, implicit multiplication accepted (manual examples: `px^2 - 3px + 5`, `p sin x`, `(p/2)x^2 + log p`); parameter interval and step: [−5, 5] step 1 by default, i.e. 11 curves; swapped bounds accepted, 256 curves maximum (man. p. 26) |
+| Palette | a different colour for each value of p, "chosen by the computer": hues spread by the golden angle, S 75%, V 85% (simplified take on the original) |
+| p labels | value of p placed on its own curve at a chosen display abscissa (expression in p alone, "1" by default); position above / on the curve / below; colour of the curve (or of its palette hue); height 2.6 mm; label omitted when the abscissa is out of range |
+| GUI preview | "progression" options: progressive drawing curve by curve (90 ms) or detailed by slices of points (25 ms), restarted on any change to the curve; labels appear only at the end; GUI-only options — exports always draw the complete family |
+| CLI | `-F/--famille EXPR` with `--p-min/--p-max/--p-pas`, `--fam-palette`, `--fam-valeurs`, `--fam-x`, `--fam-pos dessus|sur|dessous` |
+| Outputs | SVG, PNG, BMP, GIF, EPS and PDF (via rasterisation), per-curve colours and labels included |
+| Not applicable | diagram point / tangent / integral on a family (several y per x); value table (explicit error) |
+
+
 ## Roadmap (option-by-option parity with the original 2.9.4)
 
 - ✅ v0.1 — plotting core: curves, axes, 5 × 5 mm grid, SVG/PNG, session
@@ -369,6 +386,11 @@ The simulations module (manual p. 65–74) is ported: 7 models,
   line from reduced equation, curve defined point by point, inequalities
   (hatching), angle protractor (mouse drag of Diagram objects remains
   not ported)
+- ✅ v1.7 — family of functions fp(x): parameter p ([−5, 5] step 1 by
+  default, 256 curves max), "chosen by the computer" palette, p value
+  labels (display abscissa, above/on/below), curve-by-curve progression
+  in the GUI preview (point annotations and value tables do not apply
+  to a family)
 
 ## Credits and license
 

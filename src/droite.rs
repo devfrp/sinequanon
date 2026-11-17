@@ -157,7 +157,7 @@ pub fn polys(page: &Page, forme: &Forme, style: LineStyle) -> Vec<Vec<(f64, f64)
     let Some((p0, p1)) = segment_mm(page, forme) else {
         return Vec::new();
     };
-    crate::curve::apply_style(vec![vec![p0, p1]], style)
+    crate::curve::apply_style(crate::curve::Trace::simple(vec![vec![p0, p1]]), style).polys
 }
 
 /// Étiquette affichée sur la droite (man. p. 25) : l'équation, au bout
