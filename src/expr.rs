@@ -3,6 +3,9 @@
 //! Syntaxe proche des calculatrices : `2*x+1`, `sin(x)`, `x^2`,
 //! `exp(-x/4)*cos(2*pi*x)`. La multiplication implicite est acceptée
 //! (`2x`, `3sin(x)`, `2(x+1)`), ainsi que `pi`, `e`, `π` et `θ`.
+//! Les références aux fonctions définies par l'utilisateur `f1`..`f10`
+//! et la composition `f1of2` (ou `f1°f2`) sont résolues à l'analyse par
+//! substitution de leur définition (man. p. 18).
 
 use std::f64::consts::{E, PI};
 
@@ -24,6 +27,12 @@ pub enum Node {
     Rel(char, Box<Node>, Box<Node>),
     Call(String, Vec<Node>),
 }
+
+/// Environnement des fonctions définies par l'utilisateur (man. p. 18) :
+/// `env[i]` est l'expression de f(i+1), `None` si elle n'est pas encore
+/// définie. Les fonctions ne peuvent référencer que celles qui les
+/// précèdent dans cet environnement.
+pub type FuncEnv = [Option<String>];
 
 /// Variables disponibles lors de l'évaluation.
 #[derive(Debug, Clone, Copy, Default)]
@@ -51,13 +60,27 @@ enum Tok {
 
 /// Analyse une expression et renvoie son arbre syntaxique.
 pub fn parse(src: &str) -> Result<Node, String> {
+    parse_with(src, &[])
+}
+
+/// Analyse une expression en résolvant les références `f1`..`f10` sur
+/// `env` (man. p. 18). Une définition n'est analysée qu'avec les
+/// fonctions qui la précèdent : une fonction ne peut donc se référencer
+/// elle-même ni une fonction définie après elle.
+pub fn parse_with(src: &str, env: &FuncEnv) -> Result<Node, String> {
     let toks = tokenize(src)?;
-    let mut p = Parser { toks, pos: 0 };
+    let mut p = Parser { toks, pos: 0, env };
     let node = p.relation()?;
     if let Some(t) = p.peek() {
         return Err(format!("symbole inattendu « {} »", p.describe_tok(t)));
     }
     Ok(node)
+}
+
+/// Indice 0-based de f1..f10, None pour tout autre identifiant.
+fn func_ref_index(name: &str) -> Option<usize> {
+    let n: usize = name.strip_prefix('f')?.parse().ok()?;
+    (1..=10).contains(&n).then_some(n - 1)
 }
 
 fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
@@ -99,6 +122,24 @@ fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
         } else if c == 'θ' {
             toks.push(Tok::Ident("theta".into()));
             i += 1;
+        } else if c == '°' {
+            // composition de fonctions (man. p. 18) : f1°f2
+            toks.push(Tok::Op('o'));
+            i += 1;
+        } else if (c == 'f' || c == 'F') && chars.get(i + 1).is_some_and(|d| d.is_ascii_digit()) {
+            // référence f1..f10 (man. p. 18), éventuellement collée à une
+            // composition : f1of2, f1Of2, f1°f2
+            let start = i;
+            i += 1;
+            while i < chars.len() && chars[i].is_ascii_digit() {
+                i += 1;
+            }
+            let text: String = chars[start..i].iter().collect::<String>().to_lowercase();
+            toks.push(Tok::Ident(text));
+            if i < chars.len() && matches!(chars[i], 'o' | 'O' | '°') {
+                toks.push(Tok::Op('o'));
+                i += 1;
+            }
         } else if c.is_ascii_digit() || c == '.' {
             let start = i;
             while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
@@ -153,12 +194,13 @@ fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
     Ok(toks)
 }
 
-struct Parser {
+struct Parser<'a> {
     toks: Vec<Tok>,
     pos: usize,
+    env: &'a FuncEnv,
 }
 
-impl Parser {
+impl Parser<'_> {
     fn peek(&self) -> Option<&Tok> {
         self.toks.get(self.pos)
     }
@@ -282,6 +324,9 @@ impl Parser {
             }
             Tok::Ident(name) => {
                 self.bump();
+                if let Some(k) = func_ref_index(&name) {
+                    return self.function_ref(k);
+                }
                 if matches!(self.peek(), Some(Tok::LParen)) {
                     self.bump();
                     let mut args = vec![self.relation()?];
@@ -319,6 +364,102 @@ impl Parser {
                 self.describe_tok(&other)
             )),
         }
+    }
+
+    /// Référence fK, éventuellement composée (`fKofJ`, `fK°fJ`,
+    /// chaînes) et éventuellement appliquée à un argument entre
+    /// parenthèses. Sans argument, l'argument est x (fK = fK(x)).
+    fn function_ref(&mut self, first: usize) -> Result<Node, String> {
+        let mut chain = vec![first];
+        loop {
+            let compose = match self.peek() {
+                Some(Tok::Op('o')) => true,
+                Some(Tok::Ident(s)) if s == "o" => true,
+                _ => false,
+            };
+            if !compose {
+                break;
+            }
+            self.bump();
+            match self.peek().cloned() {
+                Some(Tok::Ident(name)) => match func_ref_index(&name) {
+                    Some(k) => {
+                        self.bump();
+                        chain.push(k);
+                    }
+                    None => {
+                        return Err(format!(
+                            "composition : fonction f1..f10 attendue après « o », trouvé « {name} »"
+                        ))
+                    }
+                },
+                Some(t) => {
+                    return Err(format!(
+                        "composition : fonction f1..f10 attendue après « o », trouvé « {} »",
+                        self.describe_tok(&t)
+                    ))
+                }
+                None => return Err("composition : fonction attendue après « o »".into()),
+            }
+        }
+        let arg = if matches!(self.peek(), Some(Tok::LParen)) {
+            self.bump();
+            let a = self.relation()?;
+            if !matches!(self.peek(), Some(Tok::RParen)) {
+                return Err("« ) » attendu après l'argument de la fonction".into());
+            }
+            self.bump();
+            a
+        } else {
+            Node::Var("x".into())
+        };
+        // f1of2of3 = f1(f2(f3(x))) : la composition s'applique de
+        // droite à gauche (elle est associative de toute façon).
+        let mut node = arg;
+        for &k in chain.iter().rev() {
+            node = self.inline(k, node)?;
+        }
+        Ok(node)
+    }
+
+    /// Remplace la référence f(idx+1) par sa définition, l'argument
+    /// prenant la place de x. La définition est analysée avec les seules
+    /// fonctions qui la précèdent : pas de référence circulaire.
+    fn inline(&self, idx: usize, arg: Node) -> Result<Node, String> {
+        let Some(Some(def)) = self.env.get(idx) else {
+            return Err(format!(
+                "fonction f{} non définie (une fonction ne peut utiliser que celles qui la précèdent)",
+                idx + 1
+            ));
+        };
+        let ast = parse_with(def, &self.env[..idx])?;
+        Ok(subst(&ast, "x", &arg))
+    }
+}
+
+/// Substitue `var` par `val` dans l'arbre. L'argument d'une fonction est
+/// la seule liaison : un remplacement sans capture suffit.
+fn subst(node: &Node, var: &str, val: &Node) -> Node {
+    match node {
+        Node::Num(v) => Node::Num(*v),
+        Node::Var(n) if n == var => val.clone(),
+        Node::Var(n) => Node::Var(n.clone()),
+        Node::Neg(a) => Node::Neg(Box::new(subst(a, var, val))),
+        Node::Add(a, b) => Node::Add(Box::new(subst(a, var, val)), Box::new(subst(b, var, val))),
+        Node::Sub(a, b) => Node::Sub(Box::new(subst(a, var, val)), Box::new(subst(b, var, val))),
+        Node::Mul(a, b) => Node::Mul(Box::new(subst(a, var, val)), Box::new(subst(b, var, val))),
+        Node::Div(a, b) => Node::Div(Box::new(subst(a, var, val)), Box::new(subst(b, var, val))),
+        Node::Pow(a, b) => Node::Pow(Box::new(subst(a, var, val)), Box::new(subst(b, var, val))),
+        Node::Fact(a) => Node::Fact(Box::new(subst(a, var, val))),
+        Node::Rel(op, a, b) => Node::Rel(
+            *op,
+            Box::new(subst(a, var, val)),
+            Box::new(subst(b, var, val)),
+        ),
+        Node::Call(name, args) => Node::Call(
+            name.clone(),
+            args.iter().map(|a| subst(a, var, val)).collect(),
+        ),
     }
 }
 
@@ -818,5 +959,107 @@ mod tests {
         parse("x!^2*(x>=0)").unwrap().validate_vars(&["x"]).unwrap();
         assert!(parse("3!q").is_ok());
         assert!(parse("3!q").unwrap().validate_vars(&["x"]).is_err());
+    }
+
+    // ----- v1.9 : références f1..f10 et composition (man. p. 18) -----
+
+    fn env(defs: &[&str]) -> Vec<Option<String>> {
+        defs.iter().map(|s| Some((*s).to_string())).collect()
+    }
+
+    fn ev_env(src: &str, env: &FuncEnv, x: f64) -> f64 {
+        parse_with(src, env).unwrap().eval(
+            &VarSet {
+                x: Some(x),
+                ..Default::default()
+            },
+            &mut Vec::new(),
+        )
+    }
+
+    #[test]
+    fn references_f1_f10() {
+        // exemples du manuel p. 18 : f1(x)=2x-1, f2(x)=sin x,
+        // f3(x)=f1(x)+3f2(x), f4=f1of2, f5=(f1(x))²+ln(f1(x))
+        let e = env(&[
+            "2x-1",
+            "sin x",
+            "f1(x)+3f2(x)",
+            "f1of2",
+            "(f1(x))^2+ln(f1(x))",
+        ]);
+        let p2 = std::f64::consts::FRAC_PI_2;
+        // référence avec ou sans parenthèses (= fK(x))
+        assert!((ev_env("f1", &e, 2.0) - 3.0).abs() < 1e-12);
+        assert!((ev_env("f2(x)", &e, p2) - 1.0).abs() < 1e-12);
+        // f3 s'appuie sur f1 et f2
+        assert!((ev_env("f3", &e, 1.0) - (1.0 + 3.0 * 1.0f64.sin())).abs() < 1e-12);
+        // f4(x)=f1of2(x) = f1(sin x)
+        assert!((ev_env("f4", &e, p2) - 1.0).abs() < 1e-12);
+        // f5(x)=(f1(x))²+ln(f1(x)) en x=2 : 3²+ln 3
+        assert!((ev_env("f5", &e, 2.0) - (9.0 + 3.0f64.ln())).abs() < 1e-12);
+        // f6(x)=f4(f2(x)) équivaut à f4of2(x) (man. p. 18) :
+        // f2(π/2)=1 puis f4(1)=f1(sin 1)=2 sin 1 − 1
+        let f6 = parse_with("f4(f2(x))", &e).unwrap();
+        let f6o = parse_with("f4of2", &e).unwrap();
+        let at = |n: &Node| {
+            n.eval(
+                &VarSet {
+                    x: Some(p2),
+                    ..Default::default()
+                },
+                &mut Vec::new(),
+            )
+        };
+        assert!((at(&f6) - (2.0 * 1.0f64.sin() - 1.0)).abs() < 1e-12);
+        assert!((at(&f6) - at(&f6o)).abs() < 1e-12);
+        // f10 (indice à deux chiffres)
+        let e10 = env(&["x"; 10]);
+        assert!((ev_env("f10", &e10, 3.0) - 3.0).abs() < 1e-12);
+        // après résolution, plus aucune référence : validation normale
+        parse_with("f5", &e).unwrap().validate_vars(&["x"]).unwrap();
+    }
+
+    #[test]
+    fn composition_et_application() {
+        let e = env(&["2x-1", "sin x", "x^2"]);
+        // f1of2 = f1(f2(x)) ; o minuscule, O majuscule ou ° (man. p. 18)
+        assert!((ev_env("f1of2", &e, 0.0) + 1.0).abs() < 1e-12);
+        assert!((ev_env("f1Of2", &e, 0.0) + 1.0).abs() < 1e-12);
+        assert!((ev_env("f1°f2", &e, 0.0) + 1.0).abs() < 1e-12);
+        assert!((ev_env("f1 o f2", &e, 0.0) + 1.0).abs() < 1e-12);
+        // f1of2(x) et f1(f2(x)) sont équivalents
+        let x = 0.7;
+        assert!((ev_env("f1of2(x)", &e, x) - ev_env("f1(f2(x))", &e, x)).abs() < 1e-12);
+        // chaîne de compositions et argument explicite :
+        // f1of2of3(2) = f1(f2(2²)) = 2 sin 4 − 1
+        let c = ev_env("f1of2of3(2)", &e, 0.0);
+        assert!((c - (2.0 * 4.0f64.sin() - 1.0)).abs() < 1e-12);
+        // argument quelconque : f1(2x+1) = 2(2x+1) − 1
+        assert!((ev_env("f1(2x+1)", &e, 3.0) - 13.0).abs() < 1e-12);
+        // multiplication implicite : 2f1 = 2·f1(x)
+        assert!((ev_env("2f1", &e, 2.0) - 6.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn references_seulement_anterieures() {
+        let e = env(&["2x-1", "sin x"]);
+        // f3 n'est pas encore définie
+        assert!(parse_with("f3", &e).is_err());
+        // une fonction ne peut pas se référencer elle-même
+        assert!(parse_with("f3(x)+1", &e).is_err());
+        // f2 est analysée avec f1 seulement
+        assert!(parse_with("f2(x)", &e[..1]).is_err());
+        // le chiffre 0 n'est pas la lettre o (man. p. 18)
+        assert!(parse_with("f1o0", &e).is_err());
+        // emplacement vide dans l'environnement
+        let vide = vec![Some("2x".to_string()), None];
+        assert!(parse_with("f2(x)", &vide).is_err());
+        // hors f1..f10, un identifiant f… reste une variable inconnue
+        assert!(parse_with("f11", &e)
+            .unwrap()
+            .validate_vars(&["x"])
+            .is_err());
+        assert!(parse_with("f", &e).unwrap().validate_vars(&["x"]).is_err());
     }
 }

@@ -284,6 +284,22 @@ as many curves as there are values of p.
 | Not applicable | diagram point / tangent / integral on a family (several y per x); value table (explicit error) |
 
 
+## v1.9 status — named functions f1..f10 and composition (man. p. 18)
+
+Expressions can now call user-defined functions and compose them, as in
+the original.
+
+| Included | Details |
+|---|---|
+| References | `f1`..`f10` in any expression (functions, derivatives, primitives, value tables, calculations); `fK` alone means `fK(x)` |
+| Definition order | function fN may only use the functions before it in the list — neither itself nor a later function (man. p. 18); other kinds (derivative, primitive, parametric, polar, family) see all defined functions |
+| Composition | `f1of2(x)` = f1(f2(x)), with lowercase `o`, uppercase `O` or `°`; chains `f1of2of3`; `f4(f2(x))` equals `f4of2(x)` (manual examples) |
+| Substitution | the argument replaces x in the definition, even when compound: `f1(2x+1)`; resolution happens at evaluation time, so editing f1 updates f3 automatically |
+| Numbering | fN = Nth curve of kind "function" in the list (the first ten are referenceable); the list and selectors show `f1 : y = …` |
+| Tests | 220 tests, including the manual's f3/f4/f5/f6 examples, glued/spaced/`°` composition, explicit argument, rejected self-reference, value table and annotations |
+| Not ported | decimal comma (the point remains mandatory, the comma separates arguments) |
+
+
 ## v1.8 status — expression engine: the manual's full syntax (p. 16-19)
 
 Function entry now follows the complete syntax described in the manual:
@@ -299,7 +315,7 @@ factorial, fractional powers and domains of definition.
 | Fractional powers | `x^y` is real for x < 0 when y = p/q with q odd: `x^(1/3)` is drawn over all of ℝ, as is `x^(2/3)`; sign follows the parity of p; even denominator (`x^(1/2)`) → out of domain (man. p. 18) |
 | Precedence | brackets; implicit multiplication (`3x+4` = (3*x)+4, `3x^4` = 3*(x^4)); functions; unary minus; `^` (right-associative); `*` `/`; `+` `-`; relational (man. p. 17) |
 | Tests | 213 tests, including: factorial and Γ (poles included), odd/even-denominator powers, domains of definition, bracket-free application, manual aliases |
-| Not ported | `f1`..`f10` references inside an expression and `f1of2` (or `°`) composition: they require named curve slots — here each curve keeps its own expression; decimal comma (the point remains mandatory, the comma separates arguments) |
+| Not ported | decimal comma (the point remains mandatory, the comma separates arguments) |
 
 
 ## Roadmap (option-by-option parity with the original 2.9.4)
@@ -413,8 +429,11 @@ The simulations module (manual p. 65–74) is ported: 7 models,
   (arccos/arcsin/arctan, argsh/argch/argth, sh/ch/th, int, frac, carré,
   racine…), bracket-free application ("2 sin x", "log p"), relational
   operators and domains, real factorial Γ(x+1), x^(p/q) powers with odd
-  denominator over all of ℝ (`f1`..`f10` references and `f1of2`
-  composition remain not ported)
+  denominator over all of ℝ
+- ✅ v1.9 — named functions f1..f10: references in any expression
+  (`fK` alone = `fK(x)`), earlier-function restriction, composition
+  `f1of2` / `f1°f2` / `f1(f2(x))`, argument substitution, numbering
+  shown in the list and selectors (man. p. 18)
 
 ## Credits and license
 

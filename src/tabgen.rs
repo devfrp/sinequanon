@@ -3,7 +3,7 @@
 //! f′, valeurs de f aux points critiques et aux bornes, flèches — le tout
 //! sérialisé dans le code du module tableau (éditable ensuite).
 
-use crate::expr::{Node, VarSet};
+use crate::expr::{FuncEnv, Node, VarSet};
 
 /// Subdivisions du balayage des zéros de f′.
 const N_BALAYAGE: usize = 600;
@@ -106,11 +106,17 @@ fn pad(s: &str) -> String {
 
 /// Génère le code du tableau de variations de `expr` sur [a, b].
 /// `fr` = virgule décimale (convention française).
+#[cfg(test)]
 pub fn genere(expr: &str, a: f64, b: f64, fr: bool) -> Result<String, String> {
+    genere_env(expr, a, b, fr, &[])
+}
+
+/// Idem en résolvant les références f1..f10 sur `env` (man. p. 18).
+pub fn genere_env(expr: &str, a: f64, b: f64, fr: bool, env: &FuncEnv) -> Result<String, String> {
     if b <= a {
         return Err("intervalle vide (b ≤ a)".to_string());
     }
-    let ast = crate::expr::parse(expr)?;
+    let ast = crate::expr::parse_with(expr, env)?;
     let racines = zeros_f_prime(&ast, a, b);
 
     // signe de f′ et flèche sur chaque intervalle entre frontières

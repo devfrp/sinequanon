@@ -342,6 +342,22 @@ autant de courbes qu'il y a de valeurs de p.
 | Non applicable | point du schéma / tangente / intégrale sur une famille (plusieurs y par x) ; table de valeurs (erreur explicite) |
 
 
+## État v1.9 — fonctions nommées f1..f10 et composition (man. p. 18)
+
+Les expressions peuvent appeler les fonctions définies par l'utilisateur
+et les composer entre elles, comme dans l'original.
+
+| Inclus | Détail |
+|---|---|
+| Références | `f1`..`f10` dans toute expression (fonctions, dérivées, primitives, tables de valeurs, calculs) ; `fK` seul vaut `fK(x)` |
+| Ordre de définition | une fonction fN ne peut utiliser que les fonctions qui la précèdent dans la liste — ni elle-même, ni une fonction postérieure (man. p. 18) ; les autres natures (dérivée, primitive, paramétrique, polaire, famille) voient toutes les fonctions définies |
+| Composition | `f1of2(x)` = f1(f2(x)), avec `o` minuscule, `O` majuscule ou `°` ; chaînes `f1of2of3` ; `f4(f2(x))` équivaut à `f4of2(x)` (exemples du manuel) |
+| Substitution | l'argument remplace x dans la définition, même composé : `f1(2x+1)` ; la résolution se fait à l'évaluation, donc modifier f1 met à jour f3 automatiquement |
+| Numérotation | fN = N-ième courbe de nature « fonction » de la liste (les dix premières sont référençables) ; la liste et les sélecteurs affichent `f1 : y = …` |
+| Tests | 220 tests, dont les exemples f3/f4/f5/f6 du manuel, composition collée/détachée/`°`, argument explicite, auto-référence refusée, table de valeurs et annotations |
+| Non porté | séparateur décimal virgule (le point reste obligatoire, la virgule sépare les arguments) |
+
+
 ## État v1.8 — moteur d'expressions : syntaxe complète du manuel (p. 16-19)
 
 La saisie des fonctions suit désormais la syntaxe complète décrite par le
@@ -358,7 +374,7 @@ l'intervalle de définition.
 | Puissances fractionnaires | `x^y` réel pour x < 0 lorsque y = p/q avec q impair : `x^(1/3)` est dessinée sur tout ℝ, ainsi que `x^(2/3)` ; signe selon la parité de p ; dénominateur pair (`x^(1/2)`) → hors domaine (man. p. 18) |
 | Priorités | parenthèses ; multiplication implicite (`3x+4` = (3*x)+4, `3x^4` = 3*(x^4)) ; fonctions ; signe moins unaire ; `^` (associatif à droite) ; `*` `/` ; `+` `-` ; relationnels (man. p. 17) |
 | Tests | 213 tests, dont : factorielle et Γ (dont pôles), puissances à dénominateur impair/pair, intervalle de définition, application sans parenthèses, alias du manuel |
-| Non porté | références `f1`..`f10` à l'intérieur d'une expression et composition `f1of2` (ou `°`) : elles supposent des emplacements nommés de courbes — chaque courbe garde ici son expression propre ; séparateur décimal virgule (le point reste obligatoire, la virgule sépare les arguments) |
+| Non porté | séparateur décimal virgule (le point reste obligatoire, la virgule sépare les arguments) |
 
 
 ## Feuille de route (parité option par option avec l'original 2.9.4)
@@ -416,8 +432,11 @@ l'intervalle de définition.
   (arccos/arcsin/arctan, argsh/argch/argth, sh/ch/th, int, frac, carré,
   racine…), application sans parenthèses (« 2 sin x », « log p »),
   opérateurs relationnels et intervalle de définition, factorielle réelle
-  Γ(x+1), puissances x^(p/q) à dénominateur impair sur tout ℝ (les
-  références f1..f10 et la composition f1of2 restent non portées)
+  Γ(x+1), puissances x^(p/q) à dénominateur impair sur tout ℝ
+- ✅ v1.9 — fonctions nommées f1..f10 : références dans toute expression
+  (fK seul = fK(x)), restriction aux fonctions antérieures, composition
+  f1of2 / f1°f2 / f1(f2(x)), substitution de l'argument, numérotation
+  affichée dans la liste et les sélecteurs (man. p. 18)
 
 ## Crédits et licence
 

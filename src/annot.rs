@@ -136,11 +136,16 @@ pub fn point_value(curves: &[Curve], p: &PointAnnot) -> Option<(f64, f64)> {
     let c = curves.get(p.curve)?;
     let (ux, uy) = match &c.kind {
         CurveKind::Fonction { expr } => {
-            let ast = crate::expr::parse(expr).ok()?;
+            let env = crate::curve::env_curve(curves, p.curve);
+            let ast = crate::expr::parse_with(expr, &env).ok()?;
             (p.x, eval_fn(&ast, p.x))
         }
         CurveKind::Parametree { xt, yt, .. } => {
-            let (ax, ay) = (crate::expr::parse(xt).ok()?, crate::expr::parse(yt).ok()?);
+            let env = crate::curve::fonction_defs(curves);
+            let (ax, ay) = (
+                crate::expr::parse_with(xt, &env).ok()?,
+                crate::expr::parse_with(yt, &env).ok()?,
+            );
             let vars = VarSet {
                 t: Some(p.x),
                 ..Default::default()
@@ -149,7 +154,8 @@ pub fn point_value(curves: &[Curve], p: &PointAnnot) -> Option<(f64, f64)> {
             (ax.eval(&vars, &mut unk), ay.eval(&vars, &mut unk))
         }
         CurveKind::Polaire { r, .. } => {
-            let ar = crate::expr::parse(r).ok()?;
+            let env = crate::curve::fonction_defs(curves);
+            let ar = crate::expr::parse_with(r, &env).ok()?;
             let vars = VarSet {
                 theta: Some(p.x),
                 ..Default::default()
@@ -159,7 +165,8 @@ pub fn point_value(curves: &[Curve], p: &PointAnnot) -> Option<(f64, f64)> {
             (rad * p.x.cos(), rad * p.x.sin())
         }
         CurveKind::Derivee { .. } | CurveKind::Primitive { .. } | CurveKind::Ppk { .. } => {
-            let y = crate::curve::y_nature(&c.kind, p.x)?;
+            let env = crate::curve::fonction_defs(curves);
+            let y = crate::curve::y_nature_env(&c.kind, p.x, &env)?;
             (p.x, y)
         }
         CurveKind::Famille { .. } => {
@@ -177,7 +184,8 @@ pub fn tangente_value(curves: &[Curve], t: &TangenteAnnot) -> Option<(f64, f64)>
     let CurveKind::Fonction { expr } = &c.kind else {
         return None;
     };
-    let ast = crate::expr::parse(expr).ok()?;
+    let env = crate::curve::env_curve(curves, t.curve);
+    let ast = crate::expr::parse_with(expr, &env).ok()?;
     let fa = eval_fn(&ast, t.x);
     if !fa.is_finite() {
         return None;
@@ -195,7 +203,8 @@ pub fn integrale_value(curves: &[Curve], it: &IntegraleAnnot) -> Option<f64> {
     if !it.a.is_finite() || !it.b.is_finite() || (it.a - it.b).abs() < 1e-12 {
         return None;
     }
-    let ast = crate::expr::parse(expr).ok()?;
+    let env = crate::curve::env_curve(curves, it.curve);
+    let ast = crate::expr::parse_with(expr, &env).ok()?;
     let (lo, hi) = if it.a < it.b {
         (it.a, it.b)
     } else {
@@ -443,6 +452,30 @@ mod tests {
         )
         .unwrap();
         assert!((v2 - v).abs() < 1e-12);
+    }
+
+    #[test]
+    fn references_f1_f10_dans_les_annotations() {
+        // f2(x) = f1(x)+1 avec f1(x) = x² (man. p. 18)
+        let curves = vec![
+            Curve::fonction("x^2", [0, 0, 204]),
+            Curve::fonction("f1+1", [0, 0, 204]),
+        ];
+        let (_, y) = point_value(&curves, &PointAnnot { curve: 1, x: 3.0 }).unwrap();
+        assert!((y - 10.0).abs() < 1e-9);
+        let (d, b) = tangente_value(&curves, &TangenteAnnot { curve: 1, x: 3.0 }).unwrap();
+        assert!((d - 6.0).abs() < 1e-3);
+        assert!((b - (10.0 - 18.0)).abs() < 1e-2);
+        let v = integrale_value(
+            &curves,
+            &IntegraleAnnot {
+                curve: 1,
+                a: 0.0,
+                b: 1.0,
+            },
+        )
+        .unwrap();
+        assert!((v - (1.0 / 3.0 + 1.0)).abs() < 1e-5);
     }
 
     #[test]

@@ -7,7 +7,7 @@
 //! feuille (fond opaque, comme les autres modules statistiques) aussi
 //! bien que copiée dans le presse-papier par l'interface.
 
-use crate::curve::{eval_fonction, Curve, CurveKind};
+use crate::curve::{env_curve, eval_fonction_env, fonction_defs, Curve, CurveKind};
 use crate::expr::{self, Node, VarSet};
 use crate::stats::Piece;
 use serde::{Deserialize, Serialize};
@@ -165,8 +165,9 @@ impl TableValeurs {
         let mut out = Vec::with_capacity(xs.len());
         match &c.kind {
             CurveKind::Fonction { expr, .. } => {
+                let env = env_curve(curves, self.courbe);
                 for x in xs {
-                    let y = eval_fonction(expr, x)?;
+                    let y = eval_fonction_env(expr, x, &env)?;
                     out.push(Ligne {
                         u: fmt(x),
                         v: String::new(),
@@ -175,9 +176,10 @@ impl TableValeurs {
                 }
             }
             CurveKind::Parametree { xt, yt, .. } => {
-                let ax: Node = expr::parse(xt)?;
+                let env = fonction_defs(curves);
+                let ax: Node = expr::parse_with(xt, &env)?;
                 ax.validate_vars(&["t"])?;
-                let ay: Node = expr::parse(yt)?;
+                let ay: Node = expr::parse_with(yt, &env)?;
                 ay.validate_vars(&["t"])?;
                 let mut unknown = Vec::new();
                 for t in xs {
@@ -200,8 +202,9 @@ impl TableValeurs {
                 );
             }
             CurveKind::Derivee { .. } | CurveKind::Primitive { .. } | CurveKind::Ppk { .. } => {
+                let env = fonction_defs(curves);
                 for x in xs {
-                    let y = crate::curve::y_nature(&c.kind, x)
+                    let y = crate::curve::y_nature_env(&c.kind, x, &env)
                         .ok_or_else(|| format!("table de valeurs : {x} hors du domaine"))?;
                     out.push(Ligne {
                         u: fmt(x),
@@ -358,6 +361,24 @@ mod tests {
         // 1/24 : accepté ; 1/25 : refuse
         assert_eq!(en_fraction(1.0 / 24.0, 24).as_deref(), Some("1/24"));
         assert_eq!(en_fraction(1.0 / 25.0, 24), None);
+    }
+
+    #[test]
+    fn references_f1_f10() {
+        // f2(x) = f1(x)+1 : la table de f2 résout la référence (man. p. 18)
+        let f1 = Curve::fonction("2x-1", [0, 0, 204]);
+        let f2 = Curve::fonction("f1+1", [0, 0, 204]);
+        let t = TableValeurs {
+            courbe: 1,
+            auto: true,
+            x0: 0.0,
+            pas: 1.0,
+            ..Default::default()
+        };
+        let lgs = t.lignes(&[f1, f2]).unwrap();
+        assert_eq!(lgs[0].w, "0"); // f1(0)+1
+        assert_eq!(lgs[1].w, "2"); // f1(1)+1
+        assert_eq!(lgs[2].w, "4"); // f1(2)+1
     }
 
     #[test]

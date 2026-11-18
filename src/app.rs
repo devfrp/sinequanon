@@ -4,7 +4,8 @@
 
 use crate::annot::{self, draw_list, AnnotDraw, IntegraleAnnot, PointAnnot, TangenteAnnot};
 use crate::curve::{
-    apply_style, eval_fonction, sample_trace, Curve, CurveKind, KindId, PosP, Trace, PALETTE,
+    apply_style, env_curve, eval_fonction_env, fonction_defs, sample_trace, Curve, CurveKind,
+    KindId, PosP, Trace, PALETTE,
 };
 use crate::droite::{self, DroiteEq};
 use crate::grid::Page;
@@ -318,9 +319,21 @@ impl SqApp {
 
     /// Recalcule toutes les polylignes et les annotations (à chaque frame).
     fn refresh(&mut self, cols: usize) {
+        let all = fonction_defs(&self.curves);
+        let mut avant: Vec<Option<String>> = Vec::new();
         let mut poly = Vec::with_capacity(self.curves.len());
         for c in &self.curves {
-            poly.push(sample_trace(c, &self.page, cols, 4000).map(|tr| apply_style(tr, c.style)));
+            // une fonction ne voit que celles qui la précèdent (man. p. 18)
+            let env = if matches!(c.kind, CurveKind::Fonction { .. }) {
+                &avant
+            } else {
+                &all
+            };
+            let tr = sample_trace(c, &self.page, cols, 4000, env);
+            poly.push(tr.map(|tr| apply_style(tr, c.style)));
+            if let CurveKind::Fonction { expr } = &c.kind {
+                avant.push(Some(expr.clone()));
+            }
         }
         self.poly = poly;
         self.annots = draw_list(
@@ -501,9 +514,10 @@ impl SqApp {
                 self.dirty = true;
             }
         });
+        let labels = self.labels_courbes();
         let mut to_delete: Option<usize> = None;
         let mut to_toggle: Option<usize> = None;
-        for i in 0..self.curves.len() {
+        for (i, lbl) in labels.iter().enumerate() {
             let curve = &self.curves[i];
             let err = matches!(self.poly.get(i), Some(Err(_)));
             ui.horizontal(|ui| {
@@ -519,7 +533,7 @@ impl SqApp {
                 {
                     to_toggle = Some(i);
                 }
-                let label = RichText::new(curve.label()).small();
+                let label = RichText::new(lbl).small();
                 let label = if curve.visible { label } else { label.weak() };
                 let label = if err {
                     label.color(Color32::RED)
@@ -1509,6 +1523,22 @@ impl SqApp {
         }
     }
 
+    /// Libellés de la liste : les fonctions portent leur indice fN
+    /// (man. p. 18), utilisable dans les expressions des autres courbes.
+    fn labels_courbes(&self) -> Vec<String> {
+        let mut n = 0;
+        self.curves
+            .iter()
+            .map(|c| match &c.kind {
+                CurveKind::Fonction { .. } => {
+                    n += 1;
+                    format!("f{n} : {}", c.label())
+                }
+                _ => c.label(),
+            })
+            .collect()
+    }
+
     /// Indices des courbes de type fonction (évaluables en x).
     fn courbes_fonctions(&self) -> Vec<usize> {
         self.curves
@@ -1526,6 +1556,7 @@ impl SqApp {
             return;
         }
         let t = i18n::table(self.lang);
+        let labels = self.labels_courbes();
         let mut ouverte = true;
         let mut faire: Option<(usize, f64, f64)> = None;
         egui::Window::new(t.depuis_courbe)
@@ -1542,10 +1573,10 @@ impl SqApp {
                     g.curve = fns[0];
                 }
                 ComboBox::from_label(t.courbe_l)
-                    .selected_text(self.curves[g.curve].label())
+                    .selected_text(&labels[g.curve])
                     .show_ui(ui, |ui| {
                         for i in fns {
-                            ui.selectable_value(&mut g.curve, i, self.curves[i].label());
+                            ui.selectable_value(&mut g.curve, i, &labels[i]);
                         }
                     });
                 ui.horizontal(|ui| {
@@ -1563,7 +1594,8 @@ impl SqApp {
                 CurveKind::Fonction { expr } => expr.clone(),
                 _ => String::new(),
             };
-            match crate::tabgen::genere(&expr, a, b, self.lang == Lang::Fr) {
+            let env = env_curve(&self.curves, ci);
+            match crate::tabgen::genere_env(&expr, a, b, self.lang == Lang::Fr, &env) {
                 Ok(code) => {
                     let rows = tab::parse(&code).map(|x| x.rows).unwrap_or_default();
                     self.tableaux.push(Tableau {
@@ -2407,6 +2439,7 @@ impl SqApp {
             return;
         }
         let t = i18n::table(self.lang);
+        let labels = self.labels_courbes();
         // les 10 fonctions de l'original : le solveur n'agit que sur elles
         let fns: Vec<(usize, String)> = self
             .curves
@@ -2455,10 +2488,11 @@ impl SqApp {
                     .map(|(_, e)| e.clone())
                     .unwrap_or_default();
                 ComboBox::from_label(t.calc_f)
-                    .selected_text(ex1.clone())
+                    .selected_text(labels[idx1].clone())
                     .show_ui(ui, |ui| {
-                        for (i, e) in &fns {
-                            if ui.selectable_label(*i == idx1, e).clicked() && *i != idx1 {
+                        for (i, _) in &fns {
+                            if ui.selectable_label(*i == idx1, &labels[*i]).clicked() && *i != idx1
+                            {
                                 self.calc_f1 = Some(*i);
                             }
                         }
@@ -2466,11 +2500,7 @@ impl SqApp {
                 // choix de g (une autre fonction, ou Ox)
                 let lb2 = match self.calc_f2 {
                     None => t.calc_contre_ox.to_string(),
-                    Some(i) => fns
-                        .iter()
-                        .find(|(j, _)| *j == i)
-                        .map(|(_, e)| e.clone())
-                        .unwrap_or_default(),
+                    Some(i) => labels.get(i).cloned().unwrap_or_default(),
                 };
                 ComboBox::from_label(t.calc_contre)
                     .selected_text(lb2)
@@ -2482,11 +2512,13 @@ impl SqApp {
                         {
                             self.calc_f2 = None;
                         }
-                        for (i, e) in &fns {
+                        for (i, _) in &fns {
                             if *i == idx1 {
                                 continue;
                             }
-                            if ui.selectable_label(self.calc_f2 == Some(*i), e).clicked()
+                            if ui
+                                .selectable_label(self.calc_f2 == Some(*i), &labels[*i])
+                                .clicked()
                                 && self.calc_f2 != Some(*i)
                             {
                                 self.calc_f2 = Some(*i);
@@ -2518,11 +2550,14 @@ impl SqApp {
                     };
                     let (a, b) = (self.calc_a.min(self.calc_b), self.calc_a.max(self.calc_b));
                     let n = (((b - a).abs() * 400.0).max(4000.0) as usize).min(200_000);
-                    let f1v = |x: f64| eval_fonction(&ex1, x).unwrap_or(f64::NAN);
+                    let env1 = env_curve(&self.curves, idx1);
+                    let f1v = |x: f64| eval_fonction_env(&ex1, x, &env1).unwrap_or(f64::NAN);
                     self.calc_solutions = match self.calc_f2 {
                         None => solve::zeros(&f1v, a, b, n),
-                        Some(_) => {
-                            let f2v = |x: f64| eval_fonction(&ex2, x).unwrap_or(f64::NAN);
+                        Some(i2) => {
+                            let env2 = env_curve(&self.curves, i2);
+                            let f2v =
+                                |x: f64| eval_fonction_env(&ex2, x, &env2).unwrap_or(f64::NAN);
                             solve::resolue(&f1v, &f2v, a, b, n)
                         }
                     }
@@ -3209,6 +3244,7 @@ impl SqApp {
             return;
         }
         // courbes admissibles et aperçu, calculés avant l'édition
+        let labels = self.labels_courbes();
         let cands: Vec<(usize, String)> = self
             .curves
             .iter()
@@ -3219,7 +3255,7 @@ impl SqApp {
                     CurveKind::Fonction { .. } | CurveKind::Parametree { .. }
                 )
             })
-            .map(|(i, c)| (i, c.label()))
+            .map(|(i, _)| (i, labels[i].clone()))
             .collect();
         let param = self
             .curves
@@ -3438,12 +3474,13 @@ impl SqApp {
                 return;
             }
         }
+        let labels = self.labels_courbes();
         let cands: Vec<(usize, String)> = self
             .curves
             .iter()
             .enumerate()
             .filter(|(_, c)| matches!(c.kind, CurveKind::Fonction { .. }))
-            .map(|(i, c)| (i, c.label()))
+            .map(|(i, _)| (i, labels[i].clone()))
             .collect();
         let mut ouverte = true;
         egui::Window::new(t.integ_t)
@@ -3518,7 +3555,8 @@ impl SqApp {
                     let (a, b) = (self.integ_a, self.integ_b);
                     // la fermeture capture l'expression par référence :
                     // elle est copiable et sert aux deux calculs
-                    let f = |x: f64| eval_fonction(&expr, x).unwrap_or(f64::NAN);
+                    let env = env_curve(&self.curves, ic);
+                    let f = |x: f64| eval_fonction_env(&expr, x, &env).unwrap_or(f64::NAN);
                     let v = somme(f, a, b, n, m);
                     let (inf, sup) = encadrement(f, a, b, n);
                     self.integ_res = Some((v, inf, sup));

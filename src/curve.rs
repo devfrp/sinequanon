@@ -1,6 +1,6 @@
 //! Courbes : fonctions y=f(x), paramétriques, polaires, puis échantillonnage.
 
-use crate::expr::{Node, VarSet};
+use crate::expr::{FuncEnv, Node, VarSet};
 use crate::grid::Page;
 use serde::{Deserialize, Serialize};
 
@@ -318,9 +318,10 @@ fn eval_node(node: &Node, vars: &VarSet, unknown: &mut Vec<String>) -> f64 {
     node.eval(vars, unknown)
 }
 
-/// Évalue une expression de fonction en un x donné (solveur « Calculs »).
-pub fn eval_fonction(expr: &str, x: f64) -> Result<f64, String> {
-    let ast = crate::expr::parse(expr)?;
+/// Évalue une expression de fonction en un x donné (solveur « Calculs »),
+/// en résolvant les références f1..f10 sur `env` (man. p. 18).
+pub fn eval_fonction_env(expr: &str, x: f64, env: &FuncEnv) -> Result<f64, String> {
+    let ast = crate::expr::parse_with(expr, env)?;
     ast.validate_vars(&["x"])?;
     let mut inconnues = Vec::new();
     Ok(eval_node(
@@ -331,6 +332,37 @@ pub fn eval_fonction(expr: &str, x: f64) -> Result<f64, String> {
         },
         &mut inconnues,
     ))
+}
+
+/// Expressions des fonctions f1..f10 dans l'ordre de la liste (man.
+/// p. 18) : seules les courbes de nature « fonction » sont numérotées.
+pub fn fonction_defs(curves: &[Curve]) -> Vec<Option<String>> {
+    curves
+        .iter()
+        .filter_map(|c| match &c.kind {
+            CurveKind::Fonction { expr } => Some(Some(expr.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Environnement de fonctions visible depuis la courbe `idx` : une
+/// fonction ne voit que celles qui la précèdent dans la liste ; les
+/// autres natures (dérivée, primitive, paramétrique, polaire, famille)
+/// peuvent utiliser toutes les fonctions définies.
+pub fn env_curve(curves: &[Curve], idx: usize) -> Vec<Option<String>> {
+    match curves.get(idx).map(|c| &c.kind) {
+        Some(CurveKind::Fonction { .. }) => {
+            let mut env = Vec::new();
+            for c in curves.iter().take(idx) {
+                if let CurveKind::Fonction { expr } = &c.kind {
+                    env.push(Some(expr.clone()));
+                }
+            }
+            env
+        }
+        _ => fonction_defs(curves),
+    }
 }
 
 /// Construit les polylignes y=f(x) sur le domaine de la page, en
@@ -394,19 +426,21 @@ fn courbe_fonction(page: &Page, n: usize, mut f: impl FnMut(f64) -> f64) -> Vec<
 
 /// Échantillonne la courbe en polylignes (mm). Coupe les segments aux
 /// asymptotes et hors domaine. `n_fn` : colonnes pour une fonction,
-/// `n_param` : points pour paramétrique/polaire.
+/// `n_param` : points pour paramétrique/polaire. `env` : fonctions
+/// f1..f10 utilisables dans les expressions (man. p. 18).
 pub fn sample_trace(
     curve: &Curve,
     page: &Page,
     n_fn: usize,
     n_param: usize,
+    env: &FuncEnv,
 ) -> Result<Trace, String> {
     let n_fn = n_fn.max(32);
     let n_param = n_param.max(64);
     let mut unknown = Vec::new();
     match &curve.kind {
         CurveKind::Fonction { expr } => {
-            let ast: Node = crate::expr::parse(expr)?;
+            let ast: Node = crate::expr::parse_with(expr, env)?;
             ast.validate_vars(&["x"])?;
             let mut unknown = Vec::new();
             let v = |x: f64| -> f64 {
@@ -427,7 +461,7 @@ pub fn sample_trace(
         }
         CurveKind::Derivee { expr } => {
             // nombre dérivé par différence symétrique (man. p. 19)
-            let ast: Node = crate::expr::parse(expr)?;
+            let ast: Node = crate::expr::parse_with(expr, env)?;
             ast.validate_vars(&["x"])?;
             let (x0, x1) = page.x_range();
             let pas = ((x1 - x0) / (n_fn.max(64) as f64 * 8.0)).abs().max(1e-9);
@@ -459,7 +493,7 @@ pub fn sample_trace(
         CurveKind::Primitive { expr, x0, y0 } => {
             // F(x) = y0 + S(x) − S(x0), S = ∫ depuis le bord gauche :
             // Simpson composé sur une grille affine double (man. p. 19)
-            let ast: Node = crate::expr::parse(expr)?;
+            let ast: Node = crate::expr::parse_with(expr, env)?;
             ast.validate_vars(&["x"])?;
             let (xl, xr) = page.x_range();
             let n = n_fn.max(256);
@@ -560,9 +594,9 @@ pub fn sample_trace(
             )))
         }
         CurveKind::Parametree { xt, yt, tmin, tmax } => {
-            let ax: Node = crate::expr::parse(xt)?;
+            let ax: Node = crate::expr::parse_with(xt, env)?;
             ax.validate_vars(&["t"])?;
-            let ay: Node = crate::expr::parse(yt)?;
+            let ay: Node = crate::expr::parse_with(yt, env)?;
             ay.validate_vars(&["t"])?;
             let (a, b) = if tmin <= tmax {
                 (*tmin, *tmax)
@@ -614,7 +648,7 @@ pub fn sample_trace(
             Ok(Trace::simple(polys))
         }
         CurveKind::Polaire { r, tmin, tmax } => {
-            let ast: Node = crate::expr::parse(r)?;
+            let ast: Node = crate::expr::parse_with(r, env)?;
             ast.validate_vars(&["theta", "t"])?;
             let (a, b) = if tmin <= tmax {
                 (*tmin, *tmax)
@@ -669,12 +703,12 @@ pub fn sample_trace(
             // par valeur de p (coupures d'asymptotes par courbe), le
             // paramètre collé aux facteurs accepté (px² - 3px + 5)
             let ps = fam_p_values(*pmin, *pmax, *pas)?;
-            let ast: Node = crate::expr::parse(expr)?;
+            let ast: Node = crate::expr::parse_with(expr, env)?;
             ast.validate_vars(&["x", "p"])?;
             // abscisse d'affichage des valeurs de p : expression en p
             // seule (man. p. 26), posée dessus/sur/dessous la courbe
             let axe: Option<Node> = if *valeurs {
-                let a = crate::expr::parse(x_etiq)?;
+                let a = crate::expr::parse_with(x_etiq, env)?;
                 a.validate_vars(&["p"])?;
                 Some(a)
             } else {
@@ -754,7 +788,7 @@ pub fn sample_curve(
     n_fn: usize,
     n_param: usize,
 ) -> Result<Vec<Poly>, String> {
-    sample_trace(curve, page, n_fn, n_param).map(|t| t.polys)
+    sample_trace(curve, page, n_fn, n_param, &[]).map(|t| t.polys)
 }
 
 /// Valeurs du paramètre p : pmin + k·pas jusqu'à pmax inclus (man.
@@ -826,11 +860,18 @@ fn fmt_p(v: f64) -> String {
 /// Valeur de y dessinée par les natures à abscisse x (fonction,
 /// dérivée par différence symétrique, primitive par Simpson composé,
 /// man. p. 19). None si indéfinie ou non finie.
+#[cfg(test)]
 pub fn y_nature(kind: &CurveKind, x: f64) -> Option<f64> {
+    y_nature_env(kind, x, &[])
+}
+
+/// Valeur de y en x pour les natures à abscisse, en résolvant les
+/// références f1..f10 sur `env` (man. p. 18).
+pub fn y_nature_env(kind: &CurveKind, x: f64, env: &FuncEnv) -> Option<f64> {
     match kind {
-        CurveKind::Fonction { expr } => eval_fonction(expr, x).ok(),
+        CurveKind::Fonction { expr } => eval_fonction_env(expr, x, env).ok(),
         CurveKind::Derivee { expr } => {
-            let ast = crate::expr::parse(expr).ok()?;
+            let ast = crate::expr::parse_with(expr, env).ok()?;
             ast.validate_vars(&["x"]).ok()?;
             let h = 1e-6;
             let a = eval_node(
@@ -853,7 +894,7 @@ pub fn y_nature(kind: &CurveKind, x: f64) -> Option<f64> {
             d.is_finite().then_some(d)
         }
         CurveKind::Primitive { expr, x0, y0 } => {
-            let ast = crate::expr::parse(expr).ok()?;
+            let ast = crate::expr::parse_with(expr, env).ok()?;
             ast.validate_vars(&["x"]).ok()?;
             let v = |t: f64| {
                 eval_node(
@@ -1201,6 +1242,59 @@ mod tests {
         assert!(y_nature(&pri3, -1.0).is_none());
     }
 
+    // ----- références f1..f10 (man. p. 18, v1.9) -----
+
+    #[test]
+    fn references_fonctions_dans_les_courbes() {
+        let env = vec![Some("2*x-1".to_string())];
+        // f2(x) = f1of1(x)+1 = 2(2x−1)−1+1 = 4x−2
+        let f2 = Curve::fonction("f1of1+1", PALETTE[0]);
+        assert!((y_nature_env(&f2.kind, 2.0, &env).unwrap() - 6.0).abs() < 1e-9);
+        // échantillonnage réel de la courbe
+        let tr = sample_trace(&f2, &page(), 200, 100, &env).unwrap();
+        assert!(!tr.polys.is_empty());
+        // dérivée d'une référence : f1 = x² → f′ = 2x
+        let der = CurveKind::Derivee { expr: "f1".into() };
+        let y = y_nature_env(&der, 3.0, &[Some("x^2".into())]).unwrap();
+        assert!((y - 6.0).abs() < 1e-4);
+        // primitive idem : F(3) = 9 pour f1 = 2x et F(0) = 0
+        let pri = CurveKind::Primitive {
+            expr: "f1".into(),
+            x0: 0.0,
+            y0: 0.0,
+        };
+        let y = y_nature_env(&pri, 3.0, &[Some("2*x".into())]).unwrap();
+        assert!((y - 9.0).abs() < 1e-6);
+        // référence non disponible : erreur explicite
+        let err =
+            sample_trace(&Curve::fonction("f2", PALETTE[0]), &page(), 100, 100, &env).unwrap_err();
+        assert!(err.contains("f2"), "{err}");
+    }
+
+    #[test]
+    fn references_dans_une_parametree() {
+        // y(t) = f1(t) avec f1(x) = x² : la courbe est y = x² (man. p. 18)
+        let env = vec![Some("x^2".to_string())];
+        let c = Curve::with_kind(
+            CurveKind::Parametree {
+                xt: "t".into(),
+                yt: "f1(t)".into(),
+                tmin: -1.0,
+                tmax: 1.0,
+            },
+            PALETTE[0],
+        );
+        let p = page();
+        let tr = sample_trace(&c, &p, 200, 200, &env).unwrap();
+        assert!(!tr.polys.is_empty());
+        for poly in &tr.polys {
+            for &(mx, my) in poly {
+                let (x, y) = (p.x_at_mm(mx), p.y_at_mm(my));
+                assert!((y - x * x).abs() < 0.02, "x={x} y={y}");
+            }
+        }
+    }
+
     // ----- famille de fonctions fp(x) (man. p. 26-27, v1.7) -----
 
     fn famille(expr: &str, palette: bool, valeurs: bool, x_etiq: &str, pos: PosP) -> Curve {
@@ -1239,6 +1333,7 @@ mod tests {
             &page(),
             400,
             100,
+            &[],
         )
         .unwrap();
         assert_eq!(tr.polys.len(), 11);
@@ -1308,11 +1403,11 @@ mod tests {
     #[test]
     fn famille_identifiant_inconnu() {
         let c = famille("q*sin(x)", false, false, "1", PosP::Dessus);
-        let err = sample_trace(&c, &page(), 400, 100).unwrap_err();
+        let err = sample_trace(&c, &page(), 400, 100, &[]).unwrap_err();
         assert!(err.contains("identifiant inconnu"), "err = {err}");
         // abscisse d'affichage : expression en p seule
         let c = famille("p/5", false, true, "x", PosP::Dessus);
-        assert!(sample_trace(&c, &page(), 400, 100).is_err());
+        assert!(sample_trace(&c, &page(), 400, 100, &[]).is_err());
     }
 
     #[test]
@@ -1323,6 +1418,7 @@ mod tests {
             &page(),
             400,
             100,
+            &[],
         )
         .unwrap();
         assert_eq!(tr.couleurs.len(), tr.polys.len());
@@ -1332,6 +1428,7 @@ mod tests {
             &page(),
             400,
             100,
+            &[],
         )
         .unwrap();
         assert!(tr.couleurs.is_empty());
@@ -1342,7 +1439,8 @@ mod tests {
         // positions dessus < sur la courbe < dessous (mêmes p)
         let mut hauts = Vec::new();
         for p in [PosP::Dessus, PosP::Sur, PosP::Dessous] {
-            let tr = sample_trace(&famille("p/5", false, true, "0", p), &page(), 400, 100).unwrap();
+            let tr =
+                sample_trace(&famille("p/5", false, true, "0", p), &page(), 400, 100, &[]).unwrap();
             assert_eq!(tr.etiquettes.len(), 11);
             // index 5 = p = 0 → texte « 0 », couleur de la courbe
             let e = &tr.etiquettes[5];
@@ -1358,6 +1456,7 @@ mod tests {
             &page(),
             400,
             100,
+            &[],
         )
         .unwrap();
         assert_eq!(tr.etiquettes.len(), 10);
@@ -1374,6 +1473,7 @@ mod tests {
             &page(),
             400,
             100,
+            &[],
         )
         .unwrap();
         // l'étiquette de chaque p porte la couleur de palette de sa courbe

@@ -31,7 +31,7 @@ mod tex;
 
 use crate::render::CurvePolys;
 use annot::{IntegraleAnnot, PointAnnot, TangenteAnnot};
-use curve::{apply_style, Curve, CurveKind, PosP, PALETTE};
+use curve::{apply_style, fonction_defs, Curve, CurveKind, PosP, PALETTE};
 use eframe::egui;
 use grid::Page;
 use i18n::Lang;
@@ -421,10 +421,21 @@ fn exporter(args: &[String]) -> Result<(), String> {
             Some(_) => ((o.page.width_mm * o.px_par_mm).round() as usize).clamp(256, 20000),
             None => 1600,
         };
+        let all = fonction_defs(&curves);
+        let mut avant: Vec<Option<String>> = Vec::new();
         let mut data = Vec::with_capacity(curves.len());
         for c in &curves {
-            let tr = curve::sample_trace(c, &o.page, n_fn, 6000)?;
+            // une fonction ne voit que celles qui la précèdent (man. p. 18)
+            let env = if matches!(c.kind, CurveKind::Fonction { .. }) {
+                &avant
+            } else {
+                &all
+            };
+            let tr = curve::sample_trace(c, &o.page, n_fn, 6000, env)?;
             data.push((c.clone(), apply_style(tr, c.style)));
+            if let CurveKind::Fonction { expr } = &c.kind {
+                avant.push(Some(expr.clone()));
+            }
         }
         data
     };
