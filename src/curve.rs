@@ -1287,6 +1287,7 @@ mod tests {
             ("px^2-3px+5", 1.0, 1.0, 3.0),
             ("(p/2)x^2+log(p)", 2.0, 3.0, 9.0 + 2.0f64.log10()),
             ("p sin(x)", 2.0, std::f64::consts::FRAC_PI_2, 2.0),
+            ("p sin x", 2.0, std::f64::consts::FRAC_PI_2, 2.0),
         ] {
             let ast = crate::expr::parse(src).unwrap();
             ast.validate_vars(&["x", "p"]).unwrap();
@@ -1411,6 +1412,37 @@ mod tests {
             famille("p*sin(x)", false, false, "1", PosP::Dessus).label(),
             "fp(x) = p*sin(x)"
         );
+    }
+
+    #[test]
+    fn intervalle_definition_coupee() {
+        // f(x) = (3/(x-1))(x>=2) : rien avant x = 2 (man. p. 19)
+        let c = Curve::fonction("(3/(x-1))(x>=2)", PALETTE[0]);
+        let polys = sample_curve(&c, &page(), 400, 100).unwrap();
+        let xmin = page().mm_x(2.0);
+        assert!(!polys.is_empty());
+        for poly in &polys {
+            for &(mx, _) in poly {
+                assert!(mx >= xmin - 0.3, "mx = {mx}");
+            }
+        }
+    }
+
+    #[test]
+    fn racine_cubique_sur_tout_r() {
+        // x^(1/3) définie pour x < 0 (man. p. 18)
+        let c = Curve::fonction("x^(1/3)", PALETTE[0]);
+        let polys = sample_curve(&c, &page(), 800, 100).unwrap();
+        let x0 = page().mm_x(0.0);
+        let negatifs: Vec<f64> = polys
+            .iter()
+            .flatten()
+            .filter(|&&(mx, _)| mx < x0 - 1.0)
+            .map(|&(_, my)| my)
+            .collect();
+        assert!(!negatifs.is_empty());
+        // branche négative : strictement sous l'axe (mm_y est top-down)
+        assert!(negatifs.iter().all(|&my| my > page().mm_y(0.0)));
     }
 
     #[test]

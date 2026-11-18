@@ -342,6 +342,25 @@ autant de courbes qu'il y a de valeurs de p.
 | Non applicable | point du schéma / tangente / intégrale sur une famille (plusieurs y par x) ; table de valeurs (erreur explicite) |
 
 
+## État v1.8 — moteur d'expressions : syntaxe complète du manuel (p. 16-19)
+
+La saisie des fonctions suit désormais la syntaxe complète décrite par le
+manuel : les 9 opérateurs et les 21 fonctions, l'application sans
+parenthèses, la factorielle réelle, les puissances fractionnaires et
+l'intervalle de définition.
+
+| Inclus | Détail |
+|---|---|
+| Liste des fonctions | les 21 fonctions du manuel (p. 17) : abs, arccos, arcsin, arctan (les alias asin/acos/atan restent acceptés), argch, argsh, argth, carré/carre, ch, cos, exp, frac, int, ln, log (décimal), racine, sh, sin, tan, th ; insensible à la casse ; `pi` et `e` reconnus |
+| Application sans parenthèses | « 2 sin x », « p sin x », « log p » (man. p. 16 et 26) : l'argument est le facteur primaire suivant — les fonctions sont prioritaires sur `^` (p. 17), donc `sin x^2` = (sin x)² ; les fonctions à deux arguments (min, max, mod, pow, atan2) gardent leurs parenthèses |
+| Opérateurs relationnels | `<`, `>`, `<=`, `>=` (et `≤`, `≥`) au plus bas niveau de priorité : une comparaison vaut 1 si vraie, NaN sinon — la courbe n'est pas dessinée hors intervalle : `(3/(x-1))(x>=2)`, `(3/(x-1))(x>1)(x<=5)` (man. p. 19) |
+| Factorielle | postfixée `x!` : entiers exacts, réels par Γ(x+1) (Lanczos g = 7), pôles aux entiers négatifs → non dessinée ; `1.5!` ≈ 1,3293 ; priorité de l'application de fonction : `-3!` = −6, `3!^2` = 36, `2^3!` = 64 ; exemple du manuel `6/(x!(3-x)!)` passant par (0 ; 1), (1 ; 3), (2 ; 3), (3 ; 1) |
+| Puissances fractionnaires | `x^y` réel pour x < 0 lorsque y = p/q avec q impair : `x^(1/3)` est dessinée sur tout ℝ, ainsi que `x^(2/3)` ; signe selon la parité de p ; dénominateur pair (`x^(1/2)`) → hors domaine (man. p. 18) |
+| Priorités | parenthèses ; multiplication implicite (`3x+4` = (3*x)+4, `3x^4` = 3*(x^4)) ; fonctions ; signe moins unaire ; `^` (associatif à droite) ; `*` `/` ; `+` `-` ; relationnels (man. p. 17) |
+| Tests | 213 tests, dont : factorielle et Γ (dont pôles), puissances à dénominateur impair/pair, intervalle de définition, application sans parenthèses, alias du manuel |
+| Non porté | références `f1`..`f10` à l'intérieur d'une expression et composition `f1of2` (ou `°`) : elles supposent des emplacements nommés de courbes — chaque courbe garde ici son expression propre ; séparateur décimal virgule (le point reste obligatoire, la virgule sépare les arguments) |
+
+
 ## Feuille de route (parité option par option avec l'original 2.9.4)
 
 - ✅ v0.1 — cœur traceur : courbes, repère, grille 5 × 5 mm, SVG/PNG, session
@@ -393,6 +412,12 @@ autant de courbes qu'il y a de valeurs de p.
   étiquettes des valeurs de p (abscisse d'affichage, dessus/sur/dessous),
   progression courbe par courbe dans l'aperçu GUI (les annotations
   ponctuelles et la table de valeurs ne s'appliquent pas à une famille)
+- ✅ v1.8 — moteur d'expressions : les 21 fonctions du manuel
+  (arccos/arcsin/arctan, argsh/argch/argth, sh/ch/th, int, frac, carré,
+  racine…), application sans parenthèses (« 2 sin x », « log p »),
+  opérateurs relationnels et intervalle de définition, factorielle réelle
+  Γ(x+1), puissances x^(p/q) à dénominateur impair sur tout ℝ (les
+  références f1..f10 et la composition f1of2 restent non portées)
 
 ## Crédits et licence
 

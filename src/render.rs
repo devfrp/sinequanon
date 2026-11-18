@@ -844,6 +844,112 @@ fn draw_page_raster(r: &mut Raster, p: &Page, ppm: f64, stats_mode: bool) {
         r.line(x - a / 2.0, tip - a, x, tip, axis, lw);
         r.line(x + a / 2.0, tip - a, x, tip, axis, lw);
     }
+
+    // graduations et numéros d'axe, comme en SVG (le raster ne les
+    // dessinait pas) : traits de 0,3 mm, chiffres 3 mm gris #333
+    let has_x_axis = yax.is_finite() && yax >= -0.01 && yax <= p.height_mm + 0.01;
+    let has_y_axis = xax.is_finite() && xax >= -0.01 && xax <= p.width_mm + 0.01;
+    let (xlo, xhi) = p.x_range();
+    let (ylo, yhi) = p.y_range();
+    let majors_x = p.majors(xlo, xhi, p.log_x);
+    let majors_y = p.majors(ylo, yhi, p.log_y);
+    let label_ok_x = match (majors_x.first(), majors_x.last()) {
+        (Some(&a), Some(&b)) => (p.mm_x(b) - p.mm_x(a)).abs() / majors_x.len().max(1) as f64 > 7.0,
+        _ => true,
+    };
+    let label_ok_y = match (majors_y.first(), majors_y.last()) {
+        (Some(&a), Some(&b)) => (p.mm_y(b) - p.mm_y(a)).abs() / majors_y.len().max(1) as f64 > 7.0,
+        _ => true,
+    };
+    let gris = [51, 51, 51, 255];
+    let tw = (0.3 * ppm).clamp(1.0, 3.0);
+    let size_px = 3.0 * ppm;
+    let mut origin_done = false;
+    for &k in &majors_x {
+        let x = p.mm_x(k);
+        if !x.is_finite() || x <= 0.0 || x >= p.width_mm {
+            continue;
+        }
+        if has_x_axis {
+            r.line(
+                x * ppm,
+                (yax - 0.8) * ppm,
+                x * ppm,
+                (yax + 0.8) * ppm,
+                axis,
+                tw,
+            );
+        }
+        if label_ok_x && k.abs() > 1e-12 {
+            let txt = if p.log_x {
+                format!("10^{}", k.log10().round() as i64)
+            } else {
+                fmt_num(k)
+            };
+            let y_base = if has_x_axis {
+                yax + 4.2
+            } else {
+                p.height_mm - 1.5
+            };
+            let largeur = png::texte_largeur_px(&txt, size_px);
+            r.draw_text(
+                x * ppm - largeur / 2.0,
+                y_base * ppm,
+                &txt,
+                size_px,
+                gris,
+                false,
+            );
+        }
+        if k.abs() <= 1e-12 && has_y_axis {
+            origin_done = true;
+        }
+    }
+    for &k in &majors_y {
+        let y = p.mm_y(k);
+        if !y.is_finite() || y <= 0.0 || y >= p.height_mm {
+            continue;
+        }
+        if has_y_axis {
+            r.line(
+                (xax - 0.8) * ppm,
+                y * ppm,
+                (xax + 0.8) * ppm,
+                y * ppm,
+                axis,
+                tw,
+            );
+        }
+        if label_ok_y && k.abs() > 1e-12 {
+            let txt = if p.log_y {
+                format!("10^{}", k.log10().round() as i64)
+            } else {
+                fmt_num(k)
+            };
+            let x_text = if has_y_axis { xax - 1.2 } else { 1.5 };
+            let largeur = png::texte_largeur_px(&txt, size_px);
+            r.draw_text(
+                x_text * ppm - largeur,
+                (y + 1.0) * ppm,
+                &txt,
+                size_px,
+                gris,
+                false,
+            );
+        }
+    }
+    // zéro à l'origine si aucune graduation ne le porte (comme en SVG)
+    if has_x_axis && has_y_axis && !origin_done {
+        let largeur = png::texte_largeur_px("0", size_px);
+        r.draw_text(
+            (xax - 1.2) * ppm - largeur,
+            (yax + 4.2) * ppm,
+            "0",
+            size_px,
+            gris,
+            false,
+        );
+    }
 }
 
 /// Point dans un polygone (test pair-impair, coordonnées quelconques).
@@ -1600,6 +1706,71 @@ mod tests {
         assert!(
             s.contains("10³") || s.contains("10²") || s.contains("10¹"),
             "{s}"
+        );
+    }
+
+    #[test]
+    fn raster_graduations_et_numeros() {
+        // le raster doit porter les mêmes graduations et numéros d'axe
+        // que le SVG (il ne les dessinait pas avant la v1.8)
+        let p = Page::default();
+        let r = rasterize_page(
+            &p,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            5.0,
+        );
+        let sombre = |x: usize, y: usize| r.px[(y * r.w + x) * 4] < 100;
+        let yax = (p.mm_y(0.0) * 5.0) as usize;
+        let x1 = (p.mm_x(1.0) * 5.0) as usize;
+        // graduation verticale ±0,8 mm autour de l'axe en x = 1
+        assert!(sombre(x1, yax - 4), "pas de graduation à x = 1");
+        // numéro « 1 » : 3 mm, baseline à 4,2 mm sous l'axe, centré
+        let ybase = ((p.mm_y(0.0) + 4.2) * 5.0) as usize;
+        let largeur = png::texte_largeur_px("1", 15.0) as usize;
+        let mut encre = 0;
+        for y in ybase - 14..=ybase {
+            for x in x1 - largeur / 2..x1 - largeur / 2 + largeur {
+                if y < r.h && x < r.w && sombre(x, y) {
+                    encre += 1;
+                }
+            }
+        }
+        assert!(encre > 10, "pas de numéro sous l'axe (encre = {encre})");
+        // côté y : numéro « 1 » à droite de l'axe, ancré à 1,2 mm
+        let xax = (p.mm_x(0.0) * 5.0) as usize;
+        let y1 = (p.mm_y(1.0) * 5.0 + 5.0) as usize;
+        let mut encre = 0;
+        for y in y1 - 14..=y1 {
+            for x in xax - 6 - largeur..xax - 6 {
+                if y < r.h && x < r.w && sombre(x, y) {
+                    encre += 1;
+                }
+            }
+        }
+        assert!(
+            encre > 10,
+            "pas de numéro à gauche de l'axe y (encre = {encre})"
+        );
+        // mode stats : ni axes ni graduations (seuls les pointillés
+        // [62,68,84] restent ; rien de plus sombre que 40)
+        let mut rs = Raster::new(r.w, r.h, [255, 255, 255, 255]);
+        draw_page_raster(&mut rs, &p, 5.0, true);
+        assert!(
+            !(0..r.w * r.h).any(|i| rs.px[i * 4] < 40),
+            "graduations en mode stats"
         );
     }
 

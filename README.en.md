@@ -284,6 +284,24 @@ as many curves as there are values of p.
 | Not applicable | diagram point / tangent / integral on a family (several y per x); value table (explicit error) |
 
 
+## v1.8 status — expression engine: the manual's full syntax (p. 16-19)
+
+Function entry now follows the complete syntax described in the manual:
+the 9 operators and 21 functions, bracket-free application, real
+factorial, fractional powers and domains of definition.
+
+| Included | Details |
+|---|---|
+| Function list | the manual's 21 functions (p. 17): abs, arccos, arcsin, arctan (asin/acos/atan aliases still accepted), argch, argsh, argth, carré/carre, ch, cos, exp, frac, int, ln, log (decimal), racine, sh, sin, tan, th; case-insensitive; `pi` and `e` recognised |
+| Bracket-free application | "2 sin x", "p sin x", "log p" (man. p. 16 and 26): the argument is the next primary factor — functions bind tighter than `^` (p. 17), so `sin x^2` = (sin x)²; two-argument functions (min, max, mod, pow, atan2) keep their brackets |
+| Relational operators | `<`, `>`, `<=`, `>=` (and `≤`, `≥`) at the lowest precedence: a comparison evaluates to 1 when true, NaN otherwise — the curve is not drawn outside the interval: `(3/(x-1))(x>=2)`, `(3/(x-1))(x>1)(x<=5)` (man. p. 19) |
+| Factorial | postfix `x!`: exact for integers, real values through Γ(x+1) (Lanczos g = 7), poles at negative integers → not drawn; `1.5!` ≈ 1.3293; function-application precedence: `-3!` = −6, `3!^2` = 36, `2^3!` = 64; the manual's example `6/(x!(3-x)!)` passes through (0, 1), (1, 3), (2, 3), (3, 1) |
+| Fractional powers | `x^y` is real for x < 0 when y = p/q with q odd: `x^(1/3)` is drawn over all of ℝ, as is `x^(2/3)`; sign follows the parity of p; even denominator (`x^(1/2)`) → out of domain (man. p. 18) |
+| Precedence | brackets; implicit multiplication (`3x+4` = (3*x)+4, `3x^4` = 3*(x^4)); functions; unary minus; `^` (right-associative); `*` `/`; `+` `-`; relational (man. p. 17) |
+| Tests | 213 tests, including: factorial and Γ (poles included), odd/even-denominator powers, domains of definition, bracket-free application, manual aliases |
+| Not ported | `f1`..`f10` references inside an expression and `f1of2` (or `°`) composition: they require named curve slots — here each curve keeps its own expression; decimal comma (the point remains mandatory, the comma separates arguments) |
+
+
 ## Roadmap (option-by-option parity with the original 2.9.4)
 
 - ✅ v0.1 — plotting core: curves, axes, 5 × 5 mm grid, SVG/PNG, session
@@ -391,6 +409,12 @@ The simulations module (manual p. 65–74) is ported: 7 models,
   labels (display abscissa, above/on/below), curve-by-curve progression
   in the GUI preview (point annotations and value tables do not apply
   to a family)
+- ✅ v1.8 — expression engine: the manual's 21 functions
+  (arccos/arcsin/arctan, argsh/argch/argth, sh/ch/th, int, frac, carré,
+  racine…), bracket-free application ("2 sin x", "log p"), relational
+  operators and domains, real factorial Γ(x+1), x^(p/q) powers with odd
+  denominator over all of ℝ (`f1`..`f10` references and `f1of2`
+  composition remain not ported)
 
 ## Credits and license
 
